@@ -69,7 +69,7 @@ circuits with synchronous timing: they wait for a certain number of
 warm-up cycles, then emit outputs on a repeating schedule. I designed
 a `ReadyValid` op that represents the idea of wrapping a portion of an
 Aetherling DAG with a ready-valid interface.  I modified the compose
-operators (`|&|` and `|>>=|`) to properly handle the `ReadyValid` Op.
+operators (`|\&|` and `|>>=|`) to properly handle the `ReadyValid` Op.
 The user is prevented from composing an Op with ready-valid timing
 with one with synchronous timing, and, when composing two ready-valid
 ops in sequence, the throughput-matching behavior of the Aetherling
@@ -94,10 +94,6 @@ added to the circuit.
 
 I gained a lot of experience writing tests as part of my work
 on the Aetherling project. These tests include:
-
-\begin{enumerate}
-
-\end{enumerate}
 
 \end{enumerate}
 

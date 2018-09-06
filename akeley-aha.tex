@@ -1,0 +1,74 @@
+\documentclass[11pt]{article}
+\usepackage[letterpaper, portrait, margin=4cm]{geometry}
+
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{placeins}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage[parfill]{parskip}
+\newcommand{\solution}[1]{{{\color{blue}{\bf Solution:} {#1}}}}
+\usepackage[usenames,dvipsnames,svgnames,table,hyperref]{xcolor}
+
+
+\begin{document}
+\title{Contributions to Aetherling}
+\author{David Akeley}
+\maketitle
+
+\begin{abstract}
+This is a list of my contributions to the Aetherling project. I start
+with a section summarizing tasks I worked on, then I expand on the
+tasks in further sections.
+\end{abstract}
+
+\section{Summary}
+
+\begin{enumerate}
+
+\item Line Buffer Specifications
+
+I proposed a new specification of Aetherling's line buffer node and
+wrote a document (``The Line Buffer Manifesto'') describing the
+benefits of this redesign. The previous line buffer design was hard to
+parallelize due to difficult-to-satisfy constraints on its parameters'
+divisibility, and also did not support downsampling (``stride'').
+The redesign addresses these issues.
+
+\item Functional Simulator
+
+I wrote a functional simulator for Aetherling, which includes a
+simulation of the intended behavior of the redesigned line
+buffer. This allows the user to test the functionality of an
+Aetherling DAG using pure Haskell code.
+
+\item Demonstration Apps
+
+I designed two demonstration Aetherling DAGs: Gaussian blur (7 $\times$
+7 stencil) and mipmap generation. These DAGs can be tested using the
+functional simulator along with a library (\texttt{ImageIO.hs}) for
+converting between simulator values and png images on disk. These apps
+also demonstrate the applications of the redesigned line buffer.
+
+\item Simplifying Ops
+
+An Op is a node of an Aetherling DAG (along with its children,
+sometimes). Previously there were multiple ways to express the same
+functionality. I simplified the Ops to minimize redundancy.
+
+\item Helper Functions
+
+I wrote some Haskell helper functions for creating Ops and simple
+patterns of Ops. These helpers check for invalid parameters and
+substitute for functionality lost through the Op simplification.
+
+\item 
+
+\end{enumerate}
+
+For example, elementwise addition of two
+4-arrays-of-int could be expressed as an \texttt{Add} of 4-arrays or as
+a \texttt{MapOp 4} over a scalar \texttt{Add}.
+
+\end{document}
+

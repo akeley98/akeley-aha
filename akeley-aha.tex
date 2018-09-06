@@ -108,25 +108,45 @@ are joined together, there's no guarantee that their phase patterns
 will match.
 
 Since the Aetherling type system only exposes type and throughput
-information to the user, it's vital that the system take care of
-phase matching automatically. I proposed that there should be a
-standard phase pattern for every fractional throughput
-
-This allows the complexity of phase matching to be confined to one
-Op in the system, 
-
-Combined with the ComposePar retiming pass, 
+information to the user, it's vital that the system take care of phase
+matching automatically. I proposed a scheme that assigns each
+fractional utilization ratio a standardized phase. (The earlier phase
+corresponds to $\frac{1}{3}$ utilization). This allows the complexity
+of phase matching to be confined to one Op in the system,
+\texttt{SequenceArrayRepack}. Along with the ComposePar retiming pass,
+this makes it so that users only have to be concerned with type and
+throughput matching, allowing them to view phase and latency as
+performance, rather than correctness, issues.
 
 \item Tests Written
 
 I gained a lot of experience writing tests as part of my work
 on the Aetherling project. These tests include:
 
+\begin{enumerate}
+
+\item Haskell tests for the functional simulator I designed.
+
+\item Python tests for the hardware line buffer David Durst is
+  designing based on ``The Line Buffer Manifesto''
+  specifications. These tests use the CoreIR simulator.
+
+\item Tests for the sequential compose (\texttt{|>>=|}) and parallel
+  compose (\texttt{|\&|}) Haskell Aetherling operators. These tests
+  check that the produced Haskell IR node is correct given valid
+  operands, and check that the operators reject invalid operands
+  (mismatched port types, mismatched synchronous and ready-valid
+  timing, and mismatched throughputs with synchronous timing).
+
+\item Tests for the \texttt{ComposePar} retiming passes. There are
+  $18+$ test cases, some of which have compose ops nested several
+  layers deep meant to check for corner cases.
+\end{enumerate}
 \end{enumerate}
 
-For example, elementwise addition of two
-4-arrays-of-int could be expressed as an \texttt{Add} of 4-arrays or as
-a \texttt{MapOp 4} over a scalar \texttt{Add}.
+%% For example, elementwise addition of two
+%% 4-arrays-of-int could be expressed as an \texttt{Add} of 4-arrays or as
+%% a \texttt{MapOp 4} over a scalar \texttt{Add}.
 
 \end{document}
 

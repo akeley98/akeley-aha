@@ -62,7 +62,42 @@ I wrote some Haskell helper functions for creating Ops and simple
 patterns of Ops. These helpers check for invalid parameters and
 substitute for functionality lost through the Op simplification.
 
-\item 
+\item Ready-Valid Meta-Op
+
+By default, Aetherling pipelines are composed of Ops representing
+circuits with synchronous timing: they wait for a certain number of
+warm-up cycles, then emit outputs on a repeating schedule. I designed
+a `ReadyValid` op that represents the idea of wrapping a portion of an
+Aetherling DAG with a ready-valid interface.  I modified the compose
+operators (`|&|` and `|>>=|`) to properly handle the `ReadyValid` Op.
+The user is prevented from composing an Op with ready-valid timing
+with one with synchronous timing, and, when composing two ready-valid
+ops in sequence, the throughput-matching behavior of the Aetherling
+type system is suppressed.
+
+\item ComposePar Retiming
+
+Aetherling includes a `ComposePar` Op that represents placing circuits
+(child ops) in parallel. The user is not required to ensure that each
+parallel path has the same latency (sequential latency -- the count of
+the number of register delays along a path). I wrote a pass that walks
+an Aetherling DAG searching for `ComposePar` ops, modifying its child
+ops if needed such that all paths have the same latency. The pass
+finds an optimal solution that minimizes the number of register bits
+added to the circuit.
+
+\item Fractional Underutilization and Phase
+
+
+
+\item Tests Written
+
+I gained a lot of experience writing tests as part of my work
+on the Aetherling project. These tests include:
+
+\begin{enumerate}
+
+\end{enumerate}
 
 \end{enumerate}
 

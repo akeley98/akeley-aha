@@ -72,14 +72,15 @@ substitute for functionality lost through the op simplification.
 
 By default, Aetherling pipelines are composed of ops representing
 circuits with synchronous timing: they wait for a certain number of
-warm-up cycles, then emit outputs on a repeating schedule. I designed
-a \texttt{ReadyValid} op that represents the idea of wrapping a portion
-of an Aetherling DAG with a ready-valid interface.  I modified the
-compose operators (\texttt{|\&|} and \texttt{|>>=|}) to properly handle
-the `ReadyValid` op.  The user is prevented from composing an op with
-ready-valid timing with one with synchronous timing, and, when
-composing two ready-valid ops in sequence, the throughput-matching
-behavior of the Aetherling type system is suppressed.
+warm-up cycles, then emit outputs on a repeating schedule (phase). I
+designed a \texttt{ReadyValid} op that represents the idea of wrapping
+a portion of an Aetherling DAG with a ready-valid interface.  I
+modified the compose operators (\texttt{|\&|} and \texttt{|>>=|}) to
+properly handle the `ReadyValid` op.  The user is prevented from
+composing an op with ready-valid timing with one with synchronous
+timing, and, when composing two ready-valid ops in sequence, the
+throughput-matching behavior of the Aetherling type system is
+suppressed.
 
 \item ComposePar Retiming
 
@@ -103,8 +104,8 @@ of every three cycles, the op generates garbage).
 The choice of phase for an op with integer underutilization (1 valid
 input/output per $X$ clock cycles) is obvious, but with fractional
 underutilization ($X$ valid per $Y$ clocks), there are several
-reasonable phase choices. When several such underutilized ops
-are joined together, there's no guarantee that their phase patterns
+reasonable phase choices. When several such underutilized ops are
+joined together, there's no reason to assume that their phase patterns
 will match.
 
 Since the Aetherling type system only exposes type and throughput
@@ -120,33 +121,95 @@ performance, rather than correctness, issues.
 
 \item Tests Written
 
-I gained a lot of experience writing tests as part of my work
-on the Aetherling project. These tests include:
+I gained a lot of experience writing tests as part of my work on the
+Aetherling project. These tests include tests for the functional
+simulator, tests for the hardware line buffer David Durst is
+designing, tests for the compose operators (\texttt{|\&|} and
+\texttt{|>>=|}), and tests for the \texttt{ComposePar} retiming passes.
 
+\end{enumerate}
+
+\section{Line Buffer Specifications}
+
+\section{Functional Simulator}
+
+\section{Demonstration Apps}
+
+%% Talk about how writing apps led to realizations of what new line buffer needs?
+
+\section{Simplifying Ops \& Helper Functions}
+
+Previously, many Aetherling arithmetic ops (e.g. \texttt{Add}) took a
+type parameter, which could be an array type. This meant that there
+were multiple ways to express the same operation. For example, a bit
+xor could be expressed as \texttt{XOr T\_Bit} or \texttt{Add T\_Bit},
+and elementwise addition of two 4-arrays-of-int could be expressed
+as \texttt{Add \$ T\_Array 4 T\_Int} (4-array type parameter) or
+as a \texttt{MapOp 4} over a scalar \texttt{Add T\_Int}.
+
+Since each op of the Aetherling Haskell IR will eventually need to be
+implemented in hardware, it would be best to minimize unneeded
+functionality as much as possible. I eliminated the type parameter
+from arithmetic ops, splitting the op into two ops if bit and integer
+versions are both needed (e.g. `And` for boolean $and$; `AndInts` for
+bitwise $and$).
+
+Since this change makes vectorized arithmetic harder to express
+directly, I wrote some helper functions for expressing array types and
+array operations. For example, a $16\times 16$ matrix of integers can
+be expressed as \texttt{tInts[16,16]}, and an op performing
+elementwise addition of two matrices can be expressed as
+\texttt{addInts \$ tInts[16,16]}. Internally, the IR represents
+vectorized ops as scalar ops wrapped by \texttt{MapOp}.
+In this example, \texttt{addInts} will return
+
+\texttt{MapOp 16 (MapOp 16 Add)}
+
+The helper functions also serve the purpose of checking for invalid
+parameters. For example, the function for creating a line buffer
+op\footnote{temporarily named \texttt{manifestoLineBuffer}} checks that the
+divisibility requirements are satisfied, and the \texttt{arrayReshape}
+function, which creates an \texttt{ArrayReshape} op that reinterprets
+inputs as a different type, checks that there's a reasonable mapping
+between input and output types.\footnote{
+Examples: \texttt{arrayReshape [tBits[2]] [T\_Bit, T\_Bit]} (conversion of
+2-array-of-bit to two separate bits) is valid, while
+\texttt{arrayReshape [tBits[3]] [T\_Bit]} is not since the input has
+more bits than the output.}
+
+\section{ReadyValid Op}
+
+\section{ComposePar Retiming}
+
+\section{Fractional Underutilization and Phase}
+
+\section{Test Writing}
+
+The tests I designed include
 \begin{enumerate}
+\item
 
-\item Haskell tests for the functional simulator I designed.
+Haskell tests for the functional simulator I designed.
 
-\item Python tests for the hardware line buffer David Durst is
-  designing based on ``The Line Buffer Manifesto''
-  specifications. These tests use the CoreIR simulator.
+\item
 
-\item Tests for the sequential compose (\texttt{|>>=|}) and parallel
-  compose (\texttt{|\&|}) Haskell Aetherling operators. These tests
-  check that the produced Haskell IR node is correct given valid
-  operands, and check that the operators reject invalid operands
-  (mismatched port types, mismatched synchronous and ready-valid
-  timing, and mismatched throughputs with synchronous timing).
+Python tests for the hardware line buffer David Durst is
+implementing in Magma based on ``The Line Buffer Manifesto''
+specifications. These tests use the CoreIR simulator.
+
+\item
+
+Tests for the sequential compose (\texttt{|>>=|}) and parallel
+compose (\texttt{|\&|}) Haskell Aetherling operators. These tests
+check that the produced Haskell IR node is correct given valid
+operands, and check that the operators reject invalid operands
+(mismatched port types, mismatched synchronous and ready-valid
+timing, and mismatched throughputs with synchronous timing).
 
 \item Tests for the \texttt{ComposePar} retiming passes. There are
-  $18+$ test cases, some of which have compose ops nested several
-  layers deep meant to check for corner cases.
+$18+$ test cases, some of which have compose ops nested several
+layers deep meant to check for corner cases.
 \end{enumerate}
-\end{enumerate}
-
-%% For example, elementwise addition of two
-%% 4-arrays-of-int could be expressed as an \texttt{Add} of 4-arrays or as
-%% a \texttt{MapOp 4} over a scalar \texttt{Add}.
 
 \end{document}
 

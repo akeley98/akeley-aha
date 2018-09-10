@@ -239,9 +239,9 @@ if their fractional throughputs match (checked by the Aetherling type
 system), just as the case was for the earlier system that only
 supported integer-reciprocal throughputs.
 
-Example:
+\subsection{Pipeline Example}
 
-Suppose that our pipeline is \texttt{A |>>=| B |>>=| C}
+Consider the example pipeline \texttt{A |>>=| B |>>=| C}
 (\texttt{|>>=|} means sequential compose, i.e. wire the outputs of
 left op to inputs of right op). Suppose that \texttt{A} has
 \texttt{sequentialLatency} 10, \texttt{B} has \texttt{sequentialLatency}
@@ -249,11 +249,67 @@ left op to inputs of right op). Suppose that \texttt{A} has
 ports $O_0$ and $O_1$ with throughputs $\frac{3}{5}$ and $\frac{1}{2}$
 respectively, which matches input ports $I_0, I_1$ of \texttt{C}.
 The standard phase for $\frac{3}{5}$ throughput is
-\texttt{[True, True, False, True, True]},
+\texttt{[True, True, False, True, False]},
 and for $\frac{1}{2}$, \texttt{[True, False]}. (\texttt{True} denotes
 a clock cycle with valid input/output; \texttt{False} denotes garbage).
 
+Consider the output pattern of $O_0$. We'll start with 12 cycles of
+garbage, since 12 is the sum of \texttt{A} and \texttt{B}'s
+\texttt{sequentialLatency}s, then it'll create valid outputs on cycles
+12, 13, 15, 17, 18, 20, 22... (since the $\frac{3}{5}$ phase indicates
+the $0^{th}, 1^{st}, and 3^{rd}$ cycles in each 5-cycle pattern is
+valid). Meanwhile, valid output will be sent through $O_1$ on cycles
+12, 14, 16, 18, 20, 22...
 
+This matches what \texttt{C}'s input ports $I_0$ and $I_1$
+expect. They'll wait 12 cycles since 12 is the sum of the upstream
+ops' \texttt{sequentialLatency}s, then, by looking up the same phase
+pattern, \texttt{C} can reproduce the exact schedule that \texttt{B}
+used. ($I_0$ expects input on cycles 12, 13, 15, 17...; $I_1$ on
+cycles 12, 14, 16...).
+
+Finally, note that the initial inputs and initial outputs are always
+synchronized across ports. $O_0$ and $O_1$ start output on cycle 12,
+and $I_0$ and $I_1$ start expecting input on cycle 12. This means that
+the definition of \texttt{sequentialLatency} is well-defined. Using
+the definition, we expect that each input port of \texttt{B} should
+start accepting input on cycle 10, and each output port of \texttt{C}
+should emit its first valid output on cycle 16.
+
+\begin{center}
+\includegraphics[width=1.0\linewidth]{Figures/phase.jpg}
+Visualization of scheduling based on \texttt{sequentialLatency}
+wait and repeating phase pattern.
+\end{center}
+
+\subsection{Phase Assignment Algorithm}
+
+The throughput-to-phase assignment algorithm is based on the
+\texttt{SequenceArrayRepack} op. This op converts between
+sequences of arrays of different sizes. (In Aetherling terms, a
+sequence is a stream of valid values delivered across multiple,
+not-necessarily-contiguous clock cycles -- in the earlier
+example, port $O_0$ delivers a 3-sequence of outputs on cycles
+12, 13, and 15).
+
+For example, a (fully utilized) \texttt{SequenceArrayRepack} that converts
+from 1-sequences of 2-arrays to 2-sequences of 1-arrays would take a
+valid 2-array input on cycles 0, 2, 4... and, using values unpacked from
+the input arrays, generate a 1-array output on each clock cycle.
+
+\begin{center}
+% I'm so tired of figures ending up pages away and having to
+% constantly fight with htb!!1! and friends so against all advice
+% otherwise I'm ditching floating environments except when I
+% personally feel like using one.
+\includegraphics[width=1.0\linewidth]{Figures/repack.jpg}
+\texttt{SequenceArrayRepack} repacking 2-arrays to 1-arrays.
+Each sequence gets its own digit.
+\end{center}
+
+Moar text here.
+
+\subsection{SequenceArrayRepack Example}
 
 \section{Test Writing}
 

@@ -12,6 +12,10 @@
 
 
 \begin{document}
+% Aparently Knuth thought that a document would look better with
+% lines overhanging the right margin by several parsecs than it
+% would with slightly stretched-out spaces. \sloppy fixes that.
+\sloppy
 \title{Contributions to Aetherling}
 \author{David Akeley}
 \maketitle
@@ -393,7 +397,49 @@ and therefore its schedule.}
 
 \subsection{SequenceArrayRepack Example}
 
+I think some of the confusion over my proposed
+\texttt{SequenceArrayRepack} comes from confusion between the
+concrete \texttt{SequenceArrayRepack} being analyzed and the
+imaginary \texttt{SequenceArrayRepack}s used to determine phase
+patterns.
+
+Let's work through the behavior of a repack that accepts as input
+4-sequences of 3-arrays, produces 3-sequences of 4-arrays, and has
+\texttt{cps=}6. This repack has an input throughput of
+$\frac{4}{6} = \frac{2}{3}$
+and an output throughput of $\frac{3}{6} = \frac{1}{2}$.\footnote{
+As explained in another footnote it doesn't really matter if these
+fractions are reduced, but it makes the example cleaner.
+}
+
+Determining the input and output phases requires us to construct a
+couple of \texttt{SequenceArrayRepack}s that don't really resemble
+the repack we're analyzing -- we'll get an input phase of
+\texttt{[True, True, False]} and an output phase of
+\texttt{[True, False]}. If we just repeat this phase pattern
+without any added latency, some array entries will be
+scheduled for output before they were scheduled for input, so we
+need to have \texttt{sequentialLatency=1}.
+
+\begin{center}
+% I'm a minus-sign girl in a camelCase world.
+\includegraphics[width=1.0\linewidth]{Figures/underutil-repack.jpg}
+Example of underutilized 3-sequence of 4-array to 4-sequence of
+3-array \texttt{SequenceArrayRepack} (\texttt{cps=6}). The bottom
+chart shows the schedule of the actual repack being analyzed (negative
+entries on the 0-latency leftover row illustrate the problem of array
+entries travelling backwards in time). The top two charts represent
+the imaginary line buffers used to determine the input and output
+phase.
+\end{center}
+
+As another example, % examine widening counterpart of 3,5 repack earlier.
+
 \subsection{Rationale}
+
+% If we don't standardize phase, some ops may be more efficient in
+% isolation, but when we wire them together we'll need some
+% buffers that match up phase. This adds invisible cost and latency.
 
 \section{Test Writing}
 

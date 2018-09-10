@@ -10,6 +10,8 @@
 \newcommand{\solution}[1]{{{\color{blue}{\bf Solution:} {#1}}}}
 \usepackage[usenames,dvipsnames,svgnames,table,hyperref]{xcolor}
 
+% So item # in summary match with corresponding section #.
+\setcounter{section}{-1}
 
 \begin{document}
 % Aparently Knuth thought that a document would look better with
@@ -27,6 +29,14 @@ tasks in further sections.
 \end{abstract}
 
 \section{Summary}
+
+Most of my work was focused on the Haskell portion of Aetherling.
+Aetherling supports a Haskell intermediate representation (IR) of
+hardware pipelines as an abstract syntax tree (AST) of ops.  These ops
+include arithmetic ops (e.g. multiplication) and meta-ops that take
+other ops as children (e.g. \texttt{MapOp}, which duplicates an op in
+parallel; \texttt{ComposeSeq}, which wires the outputs of one op to
+the inputs of another).
 
 \begin{enumerate}
 
@@ -50,27 +60,26 @@ The redesign addresses these issues.
 I wrote a functional simulator for Aetherling, which includes a
 simulation of the intended behavior of the redesigned line
 buffer. This allows the user to test the functionality of an
-Aetherling DAG using pure Haskell code.
+Aetherling pipeline (in IR form) using pure Haskell code.
 
 \item Demonstration Apps
 
-I designed two demonstration Aetherling DAGs: Gaussian blur (7 $\times$
-7 stencil) and mipmap generation. These DAGs can be tested using the
-functional simulator along with a library (\texttt{ImageIO.hs}) for
-converting between simulator values and png images on disk. These apps
-also demonstrate the applications of the redesigned line buffer.
+I designed two demonstration Aetherling pipelines: Gaussian blur (7
+$\times$ 7 stencil) and mipmap generation. These pipelines can be
+tested using the functional simulator along with a library
+(\texttt{ImageIO.hs}) for converting between simulator values and png
+images on disk. These apps also demonstrate the applications of the
+redesigned line buffer.
 
-\item Simplifying Ops
+\item Simplifying Ops \& Helper Functions
 
-An op is a node of an Aetherling DAG (along with its children,
-sometimes). Previously there were multiple ways to express the same
-functionality. I simplified the ops to minimize redundancy.
-
-\item Helper Functions
-
-I wrote some Haskell helper functions for creating ops and simple
-patterns of ops. These helpers check for invalid parameters and
-substitute for functionality lost through the op simplification.
+An op is a node of an Aetherling AST (along with its
+children). Previously there were multiple ways to express the same
+functionality. I simplified the ops to minimize redundancy, mainly by
+removing unneeded type parameters for arithmetic ops. Then, I wrote
+some Haskell IR helper functions for creating ops and simple patterns
+of ops. These helpers check for invalid parameters and substitute for
+functionality lost through the op simplification.
 
 \item Ready-Valid Meta-Op
 
@@ -78,7 +87,7 @@ By default, Aetherling pipelines are composed of ops representing
 circuits with synchronous timing: they wait for a certain number of
 warm-up cycles, then emit outputs on a repeating schedule (phase). I
 designed a \texttt{ReadyValid} op that represents the idea of wrapping
-a portion of an Aetherling DAG with a ready-valid interface.  I
+a portion of an Aetherling pipeline with a ready-valid interface.  I
 modified the compose operators (\texttt{|\&|} and \texttt{|>>=|}) to
 properly handle the `ReadyValid` op.  The user is prevented from
 composing an op with ready-valid timing with one with synchronous
@@ -92,7 +101,7 @@ Aetherling includes a \texttt{ComposePar} op that represents placing
 circuits (child ops) in parallel. The user is not required to ensure
 that each parallel path has the same latency (sequential latency --
 the count of the number of register delays along a path). I wrote a
-pass that walks an Aetherling DAG searching for \texttt{ComposePar}
+pass that walks an Aetherling AST searching for \texttt{ComposePar}
 ops, modifying its child ops if needed such that all paths have the
 same latency. The pass finds an optimal solution that minimizes the
 number of register bits added to the circuit.
@@ -135,6 +144,19 @@ designing, tests for the compose operators (\texttt{|\&|} and
 
 \section{Line Buffer Specifications}
 
+One of the main goals of Aetherling is to facilitate automatic
+parallelization of hardware pipelines. To this end, Aetherling
+implements speed-up passes that determine the correct way to
+parallelize each type of op in an Aetherling pipeline. For example, an
+addition op can be parallelized by being wrapped in a map; an existing
+map can be parallelized by increasing the map's parallelism (lane
+count).
+
+This turned out to be difficult for the original line buffer op
+Aetherling supports. 
+
+A further drawback of the original 
+
 \section{Functional Simulator}
 
 \section{Demonstration Apps}
@@ -155,8 +177,8 @@ Since each op of the Aetherling Haskell IR will eventually need to be
 implemented in hardware, it would be best to minimize unneeded
 functionality as much as possible. I eliminated the type parameter
 from arithmetic ops, splitting the op into two ops if bit and integer
-versions are both needed (e.g. `And` for boolean $and$; `AndInts` for
-bitwise $and$).
+versions are both needed (e.g. \texttt{And} for boolean $and$;
+\texttt{AndInts} for bitwise $and$).
 
 Since this change makes vectorized arithmetic harder to express
 directly, I wrote some helper functions for expressing array types and
@@ -428,18 +450,44 @@ Example of underutilized 3-sequence of 4-array to 4-sequence of
 3-array \texttt{SequenceArrayRepack} (\texttt{cps=6}). The bottom
 chart shows the schedule of the actual repack being analyzed (negative
 entries on the 0-latency leftover row illustrate the problem of array
-entries travelling backwards in time). The top two charts represent
-the imaginary line buffers used to determine the input and output
-phase.
+entries travelling backwards in time without added latency). The top
+two charts represent the imaginary line buffers used to determine the
+input and output phase.
 \end{center}
 
-As another example, % examine widening counterpart of 3,5 repack earlier.
+\newpage
+As another example, consider the widening counterpart of the first
+line buffer example. This widening line buffer converts from
+5-sequences of 3-arrays to 3-sequences of 5-arrays, with
+\texttt{cps=5}.
+
+\begin{center}
+\includegraphics[width=1.0\linewidth]{Figures/widening.jpg}
+Widening repack schedule (\texttt{sequenceArrayRepack (5,3) (3,5)}).
+
+\texttt{sequentialLatency=2}; the first valid output is on cycle 2.
+\end{center}
+
+Here, the input phase is \texttt{[True]} based on input throughput 1,
+and the output phase is \texttt{[True, True, False, True, False]}
+based on looking up the phase for output throughput
+$\frac{3}{5}$. This phase matches what the corresponding narrowing
+\texttt{SequenceArrayRepack} expects -- indeed, under this plan, this
+widening repack can have its schedule matched with any other op with
+throughput $\frac{3}{5}$.
 
 \subsection{Rationale}
 
+The issue with requiring a consistent phase pattern across ops is that
+an op may be forced to have more latency (and therefore more buffer
+space needed) than 
+
+% The widening repack is a bit more expensive than it needs to be.
+% With alternate output phase, can have sequentialLatency=1.
 % If we don't standardize phase, some ops may be more efficient in
 % isolation, but when we wire them together we'll need some
 % buffers that match up phase. This adds invisible cost and latency.
+% Imagine wiring up the alternate repack and original narrowing repack.
 
 \section{Test Writing}
 

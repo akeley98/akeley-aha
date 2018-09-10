@@ -183,6 +183,10 @@ more bits than the output.}
 
 \section{Fractional Underutilization and Phase}
 
+% I've tried to be extra verbose in this section because this concept
+% so far has been really hard to explain. I know that verbose ≠ good
+% explanation but it's the best I can do.
+
 Originally Aetherling only supported the concept of integer
 underutilization. After waiting for a certain number of warmup cycles,
 synchronous ops could accept inputs or create outputs on a repeating
@@ -307,9 +311,89 @@ the input arrays, generate a 1-array output on each clock cycle.
 Each sequence gets its own digit.
 \end{center}
 
+To determine the pattern for an $\frac{x}{Y}$ throughput, we figure out
+what pattern would be most convenient for the input of a fully-utilized
+\texttt{SequenceArrayRepack} converting $x$-sequences of $Y$-arrays
+to $Y$-sequences of $x$-arrays. (This is a ``narrowing'' repack: since
+\begin{equation*}
+    \text{throughput}<1 \implies x<Y
+\end{equation*}
+the output arrays are narrower than
+the input arrays). The repack is fully utilized, so the output comes
+out at maximum rate: $X$ outputs over $X$ clock cycles (in Aetherling
+terms, \texttt{cps=X}).
 
+It would be most convenient for the \texttt{SequenceArrayRepack} if
+each input array came in as soon as it was needed, but no sooner.
+(This is convenient in the sense that it minimizes internal
+buffering). Earlier, I set the $\frac{3}{5}$ throughput phase to
+\texttt{[True, True, False, True, False]}. This pattern can be
+reproduced by working through what a fully-utilized 3-sequence,
+5-array to 5-sequence, 3-array \texttt{SequenceArrayRepack} input
+schedule should be. Make a table with 5 columns, one for each clock
+cycle 0-4 (fully-utilized $\implies$ \texttt{cps=5}), and have entries
+for inputs, outputs, and leftovers in each column.
+
+\begin{center}
+\includegraphics[width=1.0\linewidth]{Figures/sorry-if-patronizing.jpg}
+Visual aid. Fill in the chart for the next example.
+\end{center}
+
+On each clock cycle, one 3-array output must be produced. Represent
+this by drawing 3 dots in the output cells. This $0^{th}$ cycle's
+output must come from some input, so one 5-array input must come in
+on the $0^{th}$ cycle, leaving 2 array entries left over that must
+be stored in \texttt{SequenceArrayRepack}'s internal buffer. Draw
+5 dots in the $0^{th}$ input cell and 2 dots in the $0^{th}$
+leftover cell to represent this.
+
+2 array entries are not enough to populate the $1^{st}$ cycle's 3-array
+output, so on that cycle we must read in another 5-array input. By
+cycle 1 then, the repack will have read in 10 and output 6 array entries,
+leaving 4 stored internally. Draw 5, 3, and 4 dots in the first column
+to represent this (input, output, leftover).
+
+Now that there's 4 array entries buffered, we can produce another
+3-array output on the $2^{nd}$ cycle without reading in another array.
+By the earlier rule, we defer reading in another valid input for now,
+producing the 3-array output using buffered inputs. Fill in 3 output
+dots and 1 leftover dots in column 2 to represent this.
+
+Fill in the last 2 columns using the same rule. There should be
+input 5-arrays on cycles 0, 1, and 3, leading to the phase pattern
+\texttt{[True, True, False, True, False]}. For each cycle 0-4, there
+should be 2, 4, 1, 3, and finally 0 leftover entries.\footnote{
+That there are 0 leftover entries at the end is notable: we would
+just repeat if we continued the phase pattern for another 5 cycles.
+If the throughput fraction $\frac{x}{Y}$ were not in reduced form, we
+would still get the same phase (recall that phase repeats, so
+\texttt{[True, False]}-repeated $\equiv$ \texttt{[True, False, True, False]}-%
+repeated. Although I've explained this as a fraction-to-phase mapping,
+in practice it's a mapping of \texttt{seqLen}$\equiv x$ and
+\texttt{cps}$\equiv Y$ to phase, so it's not actually guaranteed
+\textit{a priori} that two ops with matching fractional throughputs
+will have matching phase if the $\frac{\text{seqLen}}{\text{cps}}$
+fractions aren't in reduced form. That the phase is still the same
+without reduced fractions is pretty important to this scheme, but
+no one else seemed to be worried about this so it's in this footnote
+here.
+
+Actually, there's one last thing to note, which is that an
+X-array to Y-array \texttt{SequenceArrayRepack} has the same schedule
+(all else being equal) as an nX-array to nY-array repack, $n:$integer.
+This is the other half of the phase being the same without reducing
+fractions.
+
+If you think about the dot chart from earlier, each input, output,
+and leftover cell will have a multiple-of-$n$ number of dots. The
+chart would be equivalent if we represented each group of $n$ dots
+as a single dot, matching the original X-array to Y-array repack's chart,
+and therefore its schedule.}
+% I just had to point all that out.
 
 \subsection{SequenceArrayRepack Example}
+
+\subsection{Rationale}
 
 \section{Test Writing}
 

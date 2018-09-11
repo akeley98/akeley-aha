@@ -10,7 +10,8 @@
 \newcommand{\solution}[1]{{{\color{blue}{\bf Solution:} {#1}}}}
 \usepackage[usenames,dvipsnames,svgnames,table,hyperref]{xcolor}
 
-% So item # in summary match with corresponding section #.
+% Number Summary as section 0, so item number in summary match with
+% corresponding section number.
 \setcounter{section}{-1}
 
 \begin{document}
@@ -30,7 +31,7 @@ tasks in further sections.
 
 \section{Summary}
 
-Most of my work was focused on the Haskell portion of Aetherling.
+Most of my work is on the Haskell portion of Aetherling.
 Aetherling supports a Haskell intermediate representation (IR) of
 hardware pipelines as an abstract syntax tree (AST) of ops.  These ops
 include arithmetic ops (e.g. multiplication) and meta-ops that take
@@ -101,10 +102,11 @@ Aetherling includes a \texttt{ComposePar} op that represents placing
 circuits (child ops) in parallel. The user is not required to ensure
 that each parallel path has the same latency (sequential latency --
 the count of the number of register delays along a path). I wrote a
-pass that walks an Aetherling AST searching for \texttt{ComposePar}
-ops, modifying its child ops if needed such that all paths have the
-same latency. The pass finds an optimal solution that minimizes the
-number of register bits added to the circuit.
+pass that walks an Aetherling pipeline (in Haskell IR form), searching
+for \texttt{ComposePar} ops, modifying its child ops if needed such
+that all paths have the same latency. The pass finds an optimal
+solution that minimizes the number of register bits added to the
+circuit.
 
 \item Fractional Underutilization and Phase
 
@@ -333,7 +335,8 @@ the input arrays, generate a 1-array output on each clock cycle.
 % otherwise I'm ditching floating environments except when I
 % personally feel like using one.
 \includegraphics[width=1.0\linewidth]{Figures/repack.jpg}
-\texttt{SequenceArrayRepack} repacking 2-arrays to 1-arrays.
+\texttt{SequenceArrayRepack (1,2) (2,1)} repacking 2-arrays to 1-arrays.
+
 Each sequence gets its own digit.
 \end{center}
 
@@ -363,6 +366,8 @@ for inputs, outputs, and leftovers in each column.
 \begin{center}
 \includegraphics[width=1.0\linewidth]{Figures/sorry-if-patronizing.jpg}
 Visual aid. Fill in the chart for the next example.
+
+\texttt{SequenceArrayRepack (3,5) (5,3)}
 \end{center}
 
 On each clock cycle, one 3-array output must be produced. Represent
@@ -373,11 +378,11 @@ be stored in \texttt{SequenceArrayRepack}'s internal buffer. Draw
 5 dots in the $0^{th}$ input cell and 2 dots in the $0^{th}$
 leftover cell to represent this.
 
-2 array entries are not enough to populate the $1^{st}$ cycle's 3-array
-output, so on that cycle we must read in another 5-array input. By
-cycle 1 then, the repack will have read in 10 and output 6 array entries,
-leaving 4 stored internally. Draw 5, 3, and 4 dots in the first column
-to represent this (input, output, leftover).
+2 array entries alone are not enough to populate the $1^{st}$ cycle's
+3-array output, so on that cycle we must read in another 5-array
+input. By cycle 1 then, the repack will have read in 10 and output 6
+array entries, leaving 4 stored internally. Draw 5, 3, and 4 dots in
+the first column to represent this (input, output, leftover).
 
 Now that there's 4 array entries buffered, we can produce another
 3-array output on the $2^{nd}$ cycle without reading in another array.
@@ -459,28 +464,116 @@ input and output phase.
 As another example, consider the widening counterpart of the first
 line buffer example. This widening line buffer converts from
 5-sequences of 3-arrays to 3-sequences of 5-arrays, with
-\texttt{cps=5}.
+\texttt{cps=5}. (Figure \ref{widening.jpg})
 
-\begin{center}
+\begin{figure}
 \includegraphics[width=1.0\linewidth]{Figures/widening.jpg}
-Widening repack schedule (\texttt{sequenceArrayRepack (5,3) (3,5)}).
+Widening repack schedule (\texttt{SequenceArrayRepack (5,3) (3,5)}).
 
-\texttt{sequentialLatency=2}; the first valid output is on cycle 2.
-\end{center}
+\caption{\texttt{sequentialLatency=2}; the initial valid output comes 2 cycles
+after the initial valid input.}
+\label{widening.jpg}
+\end{figure}
 
 Here, the input phase is \texttt{[True]} based on input throughput 1,
 and the output phase is \texttt{[True, True, False, True, False]}
 based on looking up the phase for output throughput
 $\frac{3}{5}$. This phase matches what the corresponding narrowing
-\texttt{SequenceArrayRepack} expects -- indeed, under this plan, this
-widening repack can have its schedule matched with any other op with
-throughput $\frac{3}{5}$.
+repack (\texttt{SequenceArrayRepack (3,5) (5,3)}) expects -- indeed,
+under this plan, this widening repack can have its schedule matched
+with any other op with throughput $\frac{3}{5}$.
 
-\subsection{Rationale}
+\subsection{Rationale \& Alternatives}
 
 The issue with requiring a consistent phase pattern across ops is that
 an op may be forced to have more latency (and therefore more buffer
-space needed) than 
+space needed) than theoretically required. For
+\texttt{SequenceArrayRepack (3,5) (5,3)}, the
+\texttt{sequentialLatency} cannot be decreased to 1 with this output
+phase (we'd have negative leftover inputs at cycle 2). With
+\texttt{sequentialLatency=2}, the widening repack always has at least
+one value buffered on each clock cycle, and, on cycles 1,4,6... will
+have a full output array's worth of leftover outputs.  In principle
+latency and buffering could be reduced by emitting arrays at cycles 1,
+3, and 4 instead of 2, 3, and 5, adopting the alternate phase
+\begin{equation}
+    \texttt{[True, False, True, True, False]} % Double check
+    \label{alternate-phase}
+\end{equation}
+
+% Alternate line buffer figure.
+% \label{alternate-widening.jpg}
+
+The problem with not matching phase is that, while translating Haskell
+IR to actual hardware, we'll have to add additional phase-matching
+buffers between ops with matching latencies but different phase
+patterns.
+
+As an example, consider two options for wiring a widening repack to
+its corresponding narrowing repack.\footnote{ This is a contrived
+  example, but the costs illustrated also apply to more realistic
+  circuits where there is logic inserted between the two
+  \texttt{SequenceArrayRepack}s.  } Option A is for the widening
+repack to adopt the phase that the narrowing repack expects (as I
+propose). Option B is for the widening repack to adopt the alternate
+output phase at (\ref{alternate-phase}), and for a phase-matching
+device to be placed between the two repack ops.
+
+%% Figure of options A and B.
+
+First, at least in this example, the latency decrease of the alternate
+widening \texttt{SequenceArrayRepack (5,3) (3,5)} is cancelled out by
+the 1 latency increase introduced by the phase matching device.  I
+suspect that any circuit area decrease by reducing buffer space in the
+widening repack would also be cancelled out by the buffers in the
+phase matching device. In fact, the area of option B is probably
+higher that option A, because the phase matching device would need its
+own duplicate of the muxes and counters that the repack devices
+presumably use in their implementation. Think of it this way:
+conceptually, the widening repack in option A combines the
+functionality of the phase-matching device and widening repack in
+option B, using only one counter and set of muxes to do so.
+
+In my view though, the major issue with automatically adding
+phase-matching devices is that this adds extra cost and latency not
+visible in the Haskell IR, which
+\begin{enumerate}
+\item makes it more difficult for the user to reason about the latency
+and area of a circuit represented in Haskell IR form.
+
+\item makes my \texttt{ComposePar} retiming passes less useful (or much
+more difficult to write), with the true latency of different paths of
+the circuit impossible to compute from the Haskell IR alone, which does
+not provide phase informatino.
+\end{enumerate}
+
+Another alternative I considered and rejected was a simpler
+throughput-to-phase mapping (or at least a mapping simpler to
+explain). The phase pattern for a $\frac{x}{Y}$ throughput could have
+just been $x$ valid values followed by $Y-x$ garbage values.
+The issues with this approach are:
+\begin{enumerate}
+\item This would increase the buffer space needed in a
+  \texttt{SequenceArrayRepack} (which is ultimately the source of
+  fractional underutilization). Intuitively, even for widening repacks
+  and underutilized repacks, for which my proposed phase would not be
+  the one that is theoretically most efficient, it would still be more
+  expensive to have all inputs or outputs scheduled at the start or
+  end of a pattern rather than spread out through time, as my proposed
+  phases require.
+
+\item Using this mapping, we could only assume that two ports with the
+  same throughput will have matched phases if the throughput fraction
+  $\frac{x}{Y}$ is always in reduced form. The actual
+  throughput-to-phase mapping I propose does not require fractions to
+  be in reduced form; for non-reduced fractions $\frac{nx}{nY}$ my
+  proposed mapping naturally creates a phase that just repeats itself
+  $n$ times. This seemed more elegant to me than manually reducing
+  fractions.\footnote{In hindsight this isn't all that great a reason
+    (the buffer space reason is more practical), but I include it
+    because this is probably the real reason I prefer the more
+    complicated-to-explain throughput-to-phase mapping I proposed.}
+\end{enumerate}
 
 % The widening repack is a bit more expensive than it needs to be.
 % With alternate output phase, can have sequentialLatency=1.

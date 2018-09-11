@@ -154,10 +154,52 @@ addition op can be parallelized by being wrapped in a map; an existing
 map can be parallelized by increasing the map's parallelism (lane
 count).
 
-This turned out to be difficult for the original line buffer op
-Aetherling supports. 
+This parallelization turned out to be difficult for the original line
+buffer op Aetherling supported. The line buffer reads in an image as a
+stream of pixels (streamed in left-to-right, row-by-row), and emits as
+output a stream of rectangular portions of the image (we call these
+rectangles ``windows''). Ops downstream from the line buffer can then
+base their results on pixels streamed in at different points in time.
 
-A further drawback of the original 
+The original line buffer was scheduled as follows: each time a pixel
+is streamed in, an output window with the streamed-in pixel at its
+bottom-right (highest $x$ and $y$) is emitted, unless that window
+would include pixels outside of the image bounds. For example, if the
+window is 4 pixels tall and 3 pixels wide ($(4,3)$; I use $(y,x)$
+coordinates with $(0,0)$ being the top-left pixel\footnote{I advocated
+  for Aetherling to use $(y,x)$ coordinates so that pixels would be
+  streamed in lexicographical order.}), pixel $(5,5)$ would be input
+on the same cycle that the window with corners $(2,3)$ and $(5,5)$
+would appear as valid output, while input pixel $(2,0)$ would have no
+corresponding valid output window since the corresponding corner $(-1,
+-2)$ is out-of-bounds. (To make the distinction between valid and
+invalid outputs concrete, we say that if the line buffer were part
+of a ready-valid circuit, valid would be asserted only on cycles
+with valid output).
+
+The original line buffer could be parallelized by increasing the
+number of pixels streamed in per clock cycle. Since (almost) each
+input pixel corresponds to one output window's lower-right corner,
+multiple output windows would be produced per cycle as well.
+
+This plan seemed simple, but in practice such parallelized line
+buffers were difficult to schedule. The main issue is that, with
+multiple windows output per cycle, it's possible for some to be valid
+and some to be invalid at the same time. This would require some
+complicated lane-interleaving logic downstream from the line
+buffer. Furthermore, even without paralellization, this line buffer
+would be difficult to place in a synchronously-timed circuit
+(i.e. non-ready-valid), since it produces an irregular output
+pattern. The output is stalled each time the input ``passes over'' the
+left margin of the image being streamed; for example, a line buffer
+with a 4-pixel wide window would produce no valid output whenever
+one of the first 3 pixels of a row is input.
+
+A further drawback of the original line buffer is that it did not
+support an output ``stride''. Each output window is offset by 1 pixel
+from its nearest vertical and horizontal neighbors. This prevents
+mipmapping and pyramid-based image processing algorithms from being
+expressed as Aetherling pipelines.
 
 \section{Functional Simulator}
 
@@ -180,7 +222,7 @@ implemented in hardware, it would be best to minimize unneeded
 functionality as much as possible. I eliminated the type parameter
 from arithmetic ops, splitting the op into two ops if bit and integer
 versions are both needed (e.g. \texttt{And} for boolean $and$;
-\texttt{AndInts} for bitwise $and$).
+\texttt{AndInt} for bitwise $and$).
 
 Since this change makes vectorized arithmetic harder to express
 directly, I wrote some helper functions for expressing array types and

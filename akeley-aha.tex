@@ -165,7 +165,7 @@ The original line buffer was scheduled as follows: each time a pixel
 is streamed in, an output window with the streamed-in pixel at its
 bottom-right (highest $x$ and $y$) is emitted, unless that window
 would include pixels outside of the image bounds. For example, if the
-window is 4 pixels tall and 3 pixels wide ($(4,3)$; I use $(y,x)$
+window is 4 pixels tall and 3 pixels wide ($4 \times 3$; I use $(y,x)$
 coordinates with $(0,0)$ being the top-left pixel\footnote{I advocated
   for Aetherling to use $(y,x)$ coordinates so that pixels would be
   streamed in lexicographical order.}), pixel $(5,5)$ would be input
@@ -177,13 +177,20 @@ invalid outputs concrete, we say that if the line buffer were part
 of a ready-valid circuit, valid would be asserted only on cycles
 with valid output).
 
+\begin{center}
+\includegraphics[width=0.5\linewidth]{Figures/old-line-buffer.jpg}
+
+Window A (purple) is considered a valid output, but window B
+(gray) is not a valid output by the old line buffer's rules.
+\end{center}
+
 The original line buffer could be parallelized by increasing the
 number of pixels streamed in per clock cycle. Since (almost) each
 input pixel corresponds to one output window's lower-right corner,
 multiple output windows would be produced per cycle as well.
 
 This plan seemed simple, but in practice such parallelized line
-buffers were difficult to schedule. The main issue is that, with
+buffers were difficult to schedule. The main issue was that, with
 multiple windows output per cycle, it's possible for some to be valid
 and some to be invalid at the same time. This would require some
 complicated lane-interleaving logic downstream from the line
@@ -195,11 +202,76 @@ left margin of the image being streamed; for example, a line buffer
 with a 4-pixel wide window would produce no valid output whenever
 one of the first 3 pixels of a row is input.
 
+To make scheduling managable, the original line buffer had several
+divisibility requirements on its parameters. The most problematic
+restriction was that the input pixels-per-clock\footnote{
+  Strictly speaking, this parameter is horizontal pixels-per-clock.
+  The old line buffer was also planned to support streaming multiple
+  rows of pixels in per cycle, which I don't discuss here.
+} had to divide both
+
+\begin{enumerate}
+\item Window width - 1
+\item Image width - Window width + 1
+\end{enumerate}
+
+These restrictions were needed to prevent both valid and invalid
+windows from being produced on the same cycle (Figure
+\ref{old-lb-tiling.jpg}). In practice, few levels-of-parallelization
+(besides 1) could satisfy both restrictions. Stencil sizes are
+typically small, so ``Window width - 1'' already sets a low ceiling on
+pixels-per-clock. ``Window width - 1'' more likely than not would be a
+prime number, and, if ``Image width - Window width + 1'' did not share
+that prime factor, the line buffer cannot be parallelized at all.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.5\linewidth]{Figures/old-lb-tiling.jpg}
+\label{old-lb-tiling.jpg}
+\caption{Visualization of how input pixels tile an image. This line
+buffer takes 2 pixels per clock, has a $5 \times 5$ window size,
+and reads a $11 \times 10$ image. Red inputs produce no
+valid output windows; black inputs produce only valid output windows.}
+\end{figure}
+
 A further drawback of the original line buffer is that it did not
 support an output ``stride''. Each output window is offset by 1 pixel
 from its nearest vertical and horizontal neighbors. This prevents
 mipmapping and pyramid-based image processing algorithms from being
-expressed as Aetherling pipelines.
+expressed as Aetherling pipelines. (I think that Darkroom had a
+similar issue).
+
+The main problem with the old line buffer was that invalid ``garbage''
+outputs could have two causes. It could be caused by out-of-bounds
+pixel access, or it could be caused by scheduling (\texttt{ReduceOp}
+is an example of an op that produces garbage due to scheduling. A
+reduce that sums up 4-sequences of integers would produce garbage
+outputs 3-out-of-4 cycles waiting for the full sequence to be made
+available).
+
+For the new line buffer that David Durst is implementing in hardware,
+I proposed that garbage values should only result from scheduling, not
+from out-of-bounds pixel access. If a window is scheduled to be
+output, it should still be considered valid even if it contains
+garbage out-of-bounds pixels. Global bounds analysis can be performed
+at the end of an Aetherling pipeline to crop out the margins of the
+final output image that were produced from garbage pixel values.
+By moving the responsibility of tracking out-of-bounds pixel access
+from the individual line buffers to a single node at the end of the
+circuit, we can get rid of the two most restrictive divisibility
+requirements listed above.
+
+I also proposed that the new line buffer should support output stride
+(horizontal and vertical distance between windows) and origin (the
+top-left corner of the initial output window). Vertical stride in
+particular produces some scheduling difficulties that I proposed
+(but did not implement in hardware) a solution to.
+
+
+
+% W/o stride, all lb's in chain have same image size and therefore same
+% choices of throughput. With the old line buffer, this wouldn't be
+% the case if the windows sizes were different.
 
 \section{Functional Simulator}
 

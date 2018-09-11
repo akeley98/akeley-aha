@@ -285,13 +285,19 @@ The standard phase for $\frac{3}{5}$ throughput is
 and for $\frac{1}{2}$, \texttt{[True, False]}. (\texttt{True} denotes
 a clock cycle with valid input/output; \texttt{False} denotes garbage).
 
+\begin{center}
+\includegraphics[width=1.0\linewidth]{Figures/phase.jpg}
+Visualization of scheduling based on \texttt{sequentialLatency}
+wait and repeating phase pattern.
+\end{center}
+
 Consider the output pattern of $O_0$. We'll start with 12 cycles of
 garbage, since 12 is the sum of \texttt{A} and \texttt{B}'s
-\texttt{sequentialLatency}s, then it'll create valid outputs on cycles
-12, 13, 15, 17, 18, 20, 22... (since the $\frac{3}{5}$ phase indicates
-the $0^{th}, 1^{st}, and 3^{rd}$ cycles in each 5-cycle pattern is
-valid). Meanwhile, valid output will be sent through $O_1$ on cycles
-12, 14, 16, 18, 20, 22...
+\texttt{sequentialLatency}s, then $O_0$ will create valid outputs on
+cycles 12, 13, 15, 17, 18, 20, 22... (since the $\frac{3}{5}$ phase
+indicates the $0^{th}, 1^{st},$ and $3^{rd}$ cycles in each 5-cycle
+pattern is valid). Meanwhile, valid output will be sent through $O_1$
+on cycles 12, 14, 16, 18, 20, 22...
 
 This matches what \texttt{C}'s input ports $I_0$ and $I_1$
 expect. They'll wait 12 cycles since 12 is the sum of the upstream
@@ -308,12 +314,6 @@ the definition, we expect that each input port of \texttt{B} should
 start accepting input on cycle 10, and each output port of \texttt{C}
 should emit its first valid output on cycle 16.
 
-\begin{center}
-\includegraphics[width=1.0\linewidth]{Figures/phase.jpg}
-Visualization of scheduling based on \texttt{sequentialLatency}
-wait and repeating phase pattern.
-\end{center}
-
 \subsection{Phase Assignment Algorithm}
 
 The throughput-to-phase assignment algorithm is based on the
@@ -324,10 +324,15 @@ not-necessarily-contiguous clock cycles -- in the earlier
 example, port $O_0$ delivers a 3-sequence of outputs on cycles
 12, 13, and 15).
 
-For example, a (fully utilized) \texttt{SequenceArrayRepack} that converts
-from 1-sequences of 2-arrays to 2-sequences of 1-arrays would take a
-valid 2-array input on cycles 0, 2, 4... and, using values unpacked from
-the input arrays, generate a 1-array output on each clock cycle.
+For example, a (fully utilized) \texttt{SequenceArrayRepack} that
+converts from 1-sequences of 2-arrays to 2-sequences of 1-arrays would
+take a valid 2-array input on cycles 0, 2, 4... and, using values
+unpacked from the input arrays, generate a 1-array output on each
+clock cycle.  On each even-numbered cycle, one entry of the input
+2-array won't fit in the output 1-array, and will be ``leftover''
+(i.e. buffered) for output on the next clock cycle.
+% I wish that I just wrote ``buffered'' instead of ``leftover'' on
+% all my hand-drawn charts. Oh well.
 
 \begin{center}
 % I'm so tired of figures ending up pages away and having to
@@ -340,17 +345,17 @@ the input arrays, generate a 1-array output on each clock cycle.
 Each sequence gets its own digit.
 \end{center}
 
-To determine the pattern for an $\frac{x}{Y}$ throughput, we figure out
-what pattern would be most convenient for the input of a fully-utilized
-\texttt{SequenceArrayRepack} converting $x$-sequences of $Y$-arrays
-to $Y$-sequences of $x$-arrays. (This is a ``narrowing'' repack: since
+To determine the pattern for an $\frac{x}{Y}$ throughput, we figure
+out what pattern would be most convenient for the input of a
+fully-utilized \texttt{SequenceArrayRepack} converting $x$-sequences
+of $Y$-arrays to $Y$-sequences of $x$-arrays. This is a ``narrowing''
+repack: the output arrays are narrower than the input arrays since
 \begin{equation*}
     \text{throughput}<1 \implies x<Y
 \end{equation*}
-the output arrays are narrower than
-the input arrays). The repack is fully utilized, so the output comes
-out at maximum rate: $X$ outputs over $X$ clock cycles (in Aetherling
-terms, \texttt{cps=X}).
+The repack is fully utilized, so the output comes
+out at maximum rate: $Y$ outputs over $Y$ clock cycles (in Aetherling
+terms, output \texttt{seqLen=cps=Y}).
 
 It would be most convenient for the \texttt{SequenceArrayRepack} if
 each input array came in as soon as it was needed, but no sooner.
@@ -424,11 +429,12 @@ and therefore its schedule.}
 
 \subsection{SequenceArrayRepack Example}
 
-I think some of the confusion over my proposed
-\texttt{SequenceArrayRepack} comes from confusion between the
-concrete \texttt{SequenceArrayRepack} being analyzed and the
-imaginary \texttt{SequenceArrayRepack}s used to determine phase
-patterns.
+I propose that all ops conform to this phase scheme, including
+\texttt{SequenceArrayRepack} itself. It's a bit hard to explain my
+proposed \texttt{SequenceArrayRepack}'s behavior because of pontential
+confusion between the concrete \texttt{SequenceArrayRepack} being
+analyzed and the imaginary \texttt{SequenceArrayRepack}s used to
+determine phase patterns.
 
 Let's work through the behavior of a repack that accepts as input
 4-sequences of 3-arrays, produces 3-sequences of 4-arrays, and has
@@ -440,13 +446,14 @@ fractions are reduced, but it makes the example cleaner.
 }
 
 Determining the input and output phases requires us to construct a
-couple of \texttt{SequenceArrayRepack}s that don't really resemble
-the repack we're analyzing -- we'll get an input phase of
-\texttt{[True, True, False]} and an output phase of
-\texttt{[True, False]}. If we just repeat this phase pattern
-without any added latency, some array entries will be
-scheduled for output before they were scheduled for input, so we
-need to have \texttt{sequentialLatency=1}.
+couple of \texttt{SequenceArrayRepack}s that don't really resemble the
+repack we're analyzing -- analyzing their input schedule as we did
+above, we'll get an input phase of \texttt{[True, True, False]} and an
+output phase of \texttt{[True, False]}. Focusing back on the original
+\texttt{SequenceArrayRepack} we're analyzing, if we just repeat this
+phase pattern without any added latency, some array entries will be
+scheduled for output before they were scheduled for input, so we need
+to have \texttt{sequentialLatency=1}.
 
 \begin{center}
 % I'm a minus-sign girl in a camelCase world.
@@ -466,7 +473,7 @@ line buffer example. This widening line buffer converts from
 5-sequences of 3-arrays to 3-sequences of 5-arrays, with
 \texttt{cps=5}. (Figure \ref{widening.jpg})
 
-\begin{figure}
+\begin{figure}[bth]
 \includegraphics[width=1.0\linewidth]{Figures/widening.jpg}
 Widening repack schedule (\texttt{SequenceArrayRepack (5,3) (3,5)}).
 
@@ -488,9 +495,9 @@ with any other op with throughput $\frac{3}{5}$.
 The issue with requiring a consistent phase pattern across ops is that
 an op may be forced to have more latency (and therefore more buffer
 space needed) than theoretically required. For
-\texttt{SequenceArrayRepack (3,5) (5,3)}, the
-\texttt{sequentialLatency} cannot be decreased to 1 with this output
-phase (we'd have negative leftover inputs at cycle 2). With
+\texttt{SequenceArrayRepack (3,5) (5,3)}, (Figure \ref{widening.jpg})
+the \texttt{sequentialLatency} cannot be decreased to 1 with this
+output phase (we'd have negative leftover inputs at cycle 2). With
 \texttt{sequentialLatency=2}, the widening repack always has at least
 one value buffered on each clock cycle, and, on cycles 1,4,6... will
 have a full output array's worth of leftover outputs.  In principle
@@ -501,8 +508,9 @@ latency and buffering could be reduced by emitting arrays at cycles 1,
     \label{alternate-phase}
 \end{equation}
 
-% Alternate line buffer figure.
-% \label{alternate-widening.jpg}
+\begin{center}
+\includegraphics[width=1.0\linewidth]{Figures/alternate-widening.jpg}
+\end{center}
 
 The problem with not matching phase is that, while translating Haskell
 IR to actual hardware, we'll have to add additional phase-matching
@@ -510,7 +518,7 @@ buffers between ops with matching latencies but different phase
 patterns.
 
 As an example, consider two options for wiring a widening repack to
-its corresponding narrowing repack.\footnote{ This is a contrived
+its corresponding narrowing repack.\footnote{This is a contrived
   example, but the costs illustrated also apply to more realistic
   circuits where there is logic inserted between the two
   \texttt{SequenceArrayRepack}s.  } Option A is for the widening
@@ -519,7 +527,12 @@ propose). Option B is for the widening repack to adopt the alternate
 output phase at (\ref{alternate-phase}), and for a phase-matching
 device to be placed between the two repack ops.
 
-%% Figure of options A and B.
+\begin{center}
+\includegraphics[width=1.0\linewidth]{Figures/phase-comparison.jpg}
+Comparison of two options: top is my proposal, botton is rejected alternative.
+
+Information flows from top-to-bottom.
+\end{center}
 
 First, at least in this example, the latency decrease of the alternate
 widening \texttt{SequenceArrayRepack (5,3) (3,5)} is cancelled out by
@@ -544,7 +557,7 @@ and area of a circuit represented in Haskell IR form.
 \item makes my \texttt{ComposePar} retiming passes less useful (or much
 more difficult to write), with the true latency of different paths of
 the circuit impossible to compute from the Haskell IR alone, which does
-not provide phase informatino.
+not provide phase information.
 \end{enumerate}
 
 Another alternative I considered and rejected was a simpler

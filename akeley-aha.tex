@@ -90,11 +90,12 @@ warm-up cycles, then emit outputs on a repeating schedule (phase). I
 designed a \texttt{ReadyValid} op that represents the idea of wrapping
 a portion of an Aetherling pipeline with a ready-valid interface.  I
 modified the compose operators (\texttt{|\&|} and \texttt{|>>=|}) to
-properly handle the `ReadyValid` op.  The user is prevented from
+properly handle the \texttt{ReadyValid} op.  The user is prevented from
 composing an op with ready-valid timing with one with synchronous
 timing, and, when composing two ready-valid ops in sequence, the
 throughput-matching behavior of the Aetherling type system is
 suppressed.
+% There's not that much more to say is there?
 
 \item ComposePar Retiming
 
@@ -267,11 +268,172 @@ top-left corner of the initial output window). Vertical stride in
 particular produces some scheduling difficulties that I proposed
 (but did not implement in hardware) a solution to.
 
+\subsection{New Line Buffer Parameters}
 
+The new line buffer takes these parameters as pairs of $(height, width)$.
+
+\begin{enumerate}
+\item Input pixels per clock ($pxPerClk$)
+
+This defines the ``shape'' of the 2D-array
+input bus, and therefore how much more of the input image we see per
+cycle.\footnote{For simplicity I talk as if the line buffer op is
+fully utilized. If the line buffer is underutilized, then ``each cycle''
+should be taken to mean ``each cycle when the line buffer is scheduled
+to advance its state''.}
+
+I originally proposed that the height of this parameter must be 1, but
+the new line buffer may be extended to support streaming in multiple
+rows per clock cycle. In this case, the height of this parameter
+will be greater than 1, and the parameter's width must match the
+image width.
+
+\item Output window size ($window$)
+
+\item Image size ($image$)
+
+\item Output stride ($stride$)
+
+The vertical and horizontal distance between the
+upper-left corners of adjacent output windows.
+
+\item Output origin ($origin$)
+
+The upper-left coordinate of the initial output
+window (itself the upper-left most window).
+\end{enumerate}
+
+The line buffer also takes a type parameter (e.g. it could be
+parameterized with \texttt{tInts[3]} to process RGB pixels), and
+there's talk of supporting a boundary condition parameter: I proposed
+that the line buffer simply emit some garbage when it's scheduled to
+output a window that overhangs the image boundaries, but it may be
+useful to provide the line buffer with well-defined behavior when it
+conceputally accesses an out-of-bounds pixel (something akin to
+OpenGL's \texttt{GL\_TEXTURE\_WRAP} parameter).
+
+\subsection{Input-Output Format}
+
+The input is a 2D-array of pixels, with height and width given by the
+pixels-per-clock parameter. Pixels are stored and streamed in reading
+order: left-to-right, then top-to-bottom. (If the width of the input
+array equals the width of the image, then the image is streamed-in one
+(or more) row at a time, top-to-bottom).
+
+Example: For a 9-pixel wide image and a $(1,3)$ pixels-per-clock
+parameter, the first 4 cycles will see these pixels as input:
+
+\begin{tabular}{c|r r r}
+cycle & input[0][0] & input[0][1] & input[0][2] \\
+\hline
+0 & (0,0) & (0,1) & (0,2) \\
+1 & (0,3) & (0,4) & (0,5) \\
+2 & (0,6) & (0,7) & (0,8) \\
+\hline
+3 & (1,0) & (1,1) & (1,2)
+\end{tabular}
+
+The output is a 3D-array of pixels: the inner 2 dimensions correspond
+to the height and width of a window, and the outer dimension is for
+parallelism (multiple output windows packed together, left-to-right).
+
+For each image streamed in, the line buffer should produce
+\begin{equation}
+\frac{image_y}{stride_y}
+\end{equation}
+rows of valid output windows, each of which consists of
+\begin{equation}
+\frac{image_x}{stride_x}
+\end{equation}
+valid output windows.
+
+Conceptually, stride is used for downsampling, so we expect
+that the number of outputs should be divided by the stride. For
+example, if we're using a line buffer to downsample a
+$2048\times 1024$ image by 2 with Gaussian smoothing step,
+we would use a line buffer with a $(2,2)$ stride, and expect
+$\frac{2048}{2}$ rows of output windows, $\frac{1024}{2}$ windows
+per row, yielding a total of $1024\times 512$ windows,
+each of which gets convolved to yield 1 pixel of the $1024 \times 512$
+output image.
+
+\subsection{Throughput and Schedule}
+
+We define the ``window throughput'' as the average number of valid
+output windows per cycle. I wanted to spread out the new line buffer's
+outputs evenly through time to give the new line buffer a regular
+output schedule. So, I calculate the throughput by dividing the total
+number of output windows (per image) with the number of cycles it
+takes the line buffer to stream in an entire image.
+
+It takes
+\begin{equation}
+\frac{image_x image_y}{pxPerClk_x pxPerClk_y}
+\end{equation}
+cycles to stream in the entire image, and in that amount of time\footnote{
+``in that \textit{amount} of time'', because there may be added latency.}
+we must emit
+\begin{equation}
+\frac{image_x image_y}{stride_x stride_y}
+\end{equation}
+valid output windows. Dividing the two quantities, we have
+\begin{equation}
+    \text{Window throughput} = \frac
+      {pxPerClk_x pxPerClk_y}{strides_x strides_y}
+\end{equation}
+
+The parallelism of the output array (i.e. its outermost dimension)
+will be set to accomodate this many output windows per cycle (1 for
+window throughput $\le1$).
+
+If the window throughput is 1 or greater, then it should be an integer
+$N$ (more on this later), and the line buffer is scheduled to start
+with a certain number of latency cycles, where no valid outputs are
+produced, then proceed to generate $N$ valid outputs every cycle.
+
+If the window throughput is a fraction less than 1, then the line
+buffer will generate at most 1 valid output per clock cycle.
+
+These output windows are packed into the parallel output left-to-right,
+then streamed left-to-right, row-by-row.
+
+Especially for line buffers with $stride_y > 1$, evenly spreading out
+the output windows through time breaks the relationship between a
+given cycle's inputs and outputs. Unlike the old line buffer, where
+each output window's lower-right pixel corresponds to a pixel input on
+the same cycle, in the new line buffer there may be no clear
+relationship between one clock cycle's outputs and inputs.
+
+As an example, consider a line buffer with image size $(4,8)$,
+stride $(2,2)$, and $pxPerClk$ $(1,8)$.
+
+\begin{center}
+\includegraphics[width=0.6\linewidth]{Figures/lb-schedule.jpg}
+
+Top: Image pixels labelled with the clock cycle they were input on.
+
+Bottom: Output window schedule. Each color represents one cycle's output.
+\end{center}
+
+This line buffer reads in an entire row of the image per clock cycle,
+and, dividing ($1\times 8$) by ($2\times 2$), we deduce that it should
+emit 2 valid output windows per clock cycle. After waiting a certain
+number of latency cycles (depends on implementation), the line buffer
+should output the 2-window arrays A, B, C, and D in 4 clock cycles
+with no pauses in between (unless the line buffer has been wrapped in
+an underutilization op).
+
+\subsection{Remaining Divisibility Requirements}
+
+% Need pxPerClk restrictions to make the average argument work.
 
 % W/o stride, all lb's in chain have same image size and therefore same
 % choices of throughput. With the old line buffer, this wouldn't be
 % the case if the windows sizes were different.
+
+% Talk about ``window throughput''
+
+\subsection{Chain of Line Buffers Example}
 
 \section{Functional Simulator}
 
@@ -285,9 +447,9 @@ Previously, many Aetherling arithmetic ops (e.g. \texttt{Add}) took a
 type parameter, which could be an array type. This meant that there
 were multiple ways to express the same operation. For example, a bit
 xor could be expressed as \texttt{XOr T\_Bit} or \texttt{Add T\_Bit},
-and elementwise addition of two 4-arrays-of-int could be expressed
-as \texttt{Add \$ T\_Array 4 T\_Int} (4-array type parameter) or
-as a \texttt{MapOp 4} over a scalar \texttt{Add T\_Int}.
+and elementwise addition of two 4-arrays-of-int could be expressed as
+\texttt{Add \$ T\_Array 4 T\_Int} (4-array type parameter) or as a
+\texttt{MapOp 4} over a scalar \texttt{Add T\_Int}.
 
 Since each op of the Aetherling Haskell IR will eventually need to be
 implemented in hardware, it would be best to minimize unneeded

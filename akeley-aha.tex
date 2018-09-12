@@ -723,9 +723,52 @@ AST.\footnote{Strictly speaking, the memory ops are numbered based on
   copies of the actual op. If that op contains memory ops, each needs
   to be numbered separately.}
 
-Internally, the simulator works by specializing the \texttt{simhl}\footnote{
-\textit{sim}ulate \textit{h}igh \textit{l}evel} function for each op
-offered by Aetherling.
+Internally, the simulator works by specializing the
+\texttt{simhl}\footnote{ \textit{sim}ulate \textit{h}igh
+  \textit{l}evel} function for each op offered by Aetherling.
+The \texttt{simhl} function gets passed
+
+\begin{enumerate}
+\item A list of port input streams (in 2D-format as in \texttt{simulateHighLevel}).
+\item A \texttt{SimhlState} instance.
+\end{enumerate}
+
+and returns
+
+\begin{enumerate}
+\item A list of port output streams (2D-list format)
+\item The input \texttt{SimhlState}, modified by the op and its children.
+\end{enumerate}
+
+The main purpose of of the \texttt{SimhlState} type is to distribute
+and collect memory inputs/outputs. It holds two lists of ``memory
+tapes'' (themselves lists of \texttt{ValueType}, just like simulator
+port inputs), one for memory inputs and one for outputs. A tape is
+popped from the input list whenever \texttt{SimhlState} is passed to a
+\texttt{simhl MemRead} call, with the popped tape used as the
+\texttt{MemRead}'s simulated output stream. Similarly, a tape is appended to
+the output list by \texttt{simhl MemWrite}.
+
+To support the DFS-based order the user is expected to pass memory
+inputs in, the user's memory arguments are pasted into the
+\texttt{SimhlState} directly, then, each op's \texttt{simhl}
+implementation is expected to thread the \texttt{SimhlState}
+through all of its child op's \texttt{simhl} calls. (Here,
+thread means to pass the \texttt{SimhlState} as an argument to
+\texttt{simhl} and use the returned \texttt{SimhlState} instead
+of the original \texttt{SimhlState} going forward).
+
+Example: If the \texttt{simhl} call for \texttt{ComposePar [a, b]}
+receives \texttt{state} as its \texttt{SimhlState} argument, then that
+\texttt{state} should be passed to the \texttt{simhl a} call (along
+with port inputs), yielding \texttt{SimhlState state'}. This
+\texttt{state'} is passed to \texttt{simhl b}, resulting in
+\texttt{state''}, which should be the final \texttt{SimhlState} value
+returned by \texttt{simhl \$ ComposePar [a, b]}. \texttt{simhl a} and
+\texttt{simhl b} are themselves expected to thread \texttt{SimhlState}
+through any child ops they have, so, the final \texttt{state''} output
+has been threaded through the entire AST anchored at
+\texttt{ComposePar [a, b]} in DFS order.
 
 \section{Demonstration Apps}
 

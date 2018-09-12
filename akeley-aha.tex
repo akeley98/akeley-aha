@@ -228,12 +228,12 @@ that prime factor, the line buffer cannot be parallelized at all.
 \begin{figure}
 \centering
 \includegraphics[width=0.5\linewidth]{Figures/old-lb-tiling.jpg}
-\label{old-lb-tiling.jpg}
 \caption{Visualization of how input pixels tile an image. This line
 buffer takes 2 pixels per clock, has a $5 \times 5$ window size,
 and reads a $11 \times 10$ image. Red inputs produce no
 valid output windows; black inputs produce only valid output windows
 (under old line buffer rules).}
+\label{old-lb-tiling.jpg}
 \end{figure}
 
 A further drawback of the original line buffer is that it did not
@@ -252,14 +252,14 @@ outputs 3-out-of-4 cycles waiting for the full sequence to be made
 available).
 
 For the new line buffer that David Durst is implementing in hardware,
-I proposed that garbage values should only result from scheduling, not
+I proposed that invalid values should only result from scheduling, not
 from out-of-bounds pixel access. If a window is scheduled to be
 output, it should still be considered valid even if it contains
 garbage out-of-bounds pixels. Global bounds analysis can be performed
 at the end of an Aetherling pipeline to crop out the margins of the
-final output image that were produced from garbage pixel values.
-By moving the responsibility of tracking out-of-bounds pixel access
-from the individual line buffers to a single node at the end of the
+final output image that were produced from garbage pixel values.  By
+moving the responsibility of tracking out-of-bounds pixel access from
+the individual line buffers to a single node at the end of the
 circuit, we can get rid of the two most restrictive divisibility
 requirements listed above.
 
@@ -475,8 +475,6 @@ for downsampling, and we expect downsampling by a factor of $x$ should
 scale the number of output samples (windows) by exactly $x^{-1}$ --
 impossible if the image dimension is not itself a multiple of $x$.
 
-
-
 The pragmatic justification is that scheduling becomes difficult
 without this stride assumption. The window throughput calculations
 were dependent on the total number of output windows being exactly
@@ -509,10 +507,10 @@ dimensions.\footnote{ In case this sounds more-or-less the same as the
   \includegraphics[width=0.6\linewidth]{Figures/footnote-rambling.jpg}
   \caption{Footnote example with image width 8, output window size
     $(4,4)$ and strides $(3,2)$. There are 4 windows per row of
-    windows since image width 8 divided by x-stride 2 is 4. Notice
+    windows since image width 8 divided by $stride_x$ 2 is 4. Notice
     that the left-most window includes 9 new pixels and the right-most
     3, but on average each window requires emitting 6 new pixels,
-    which matches the product of the x- and y-strides.}
+    which matches the product of $stride_x$ and $stride_y$.}
   \label{footnote-rambling.jpg}
 \end{figure}
 
@@ -529,7 +527,58 @@ restrictions when window throughput is below 1.
 
 \subsection{Chain of Line Buffers Example}
 
+Consider a pipeline made up of two line buffers with combinational
+stencil logic inserted between ($3 \times 3$ stencil) and after ($3
+\times 5$) the line buffers. The two line buffers have
+parameters\footnote{ Errata: It turns out that the upstream line
+  buffer's latency is impossibly low -- the bottom-right pixel of the
+  rightmost window each cycle has to travel back in time by 1 cycle.}
+\begin{center}
+\begin{tabular}{r|c c c c c c}
+& $pxPerClk$ & $window$ & $image$ & $stride$ & $origin$ &
+\texttt{sequentialLatency}
+\\
+Upstream line buffer & (1,4) & (3,3) & (6,12) & (1,1) & (-1,-1) & 3
+\\
+Downstream line buffer & (1,4) & (3,5) & (6,12) & (1,2) & (-1,-2) & 4
+\end{tabular}
+\end{center}
 
+\begin{center}
+\includegraphics[width=1.0\linewidth]{Figures/lb-chain.jpg}
+\end{center}
+
+For the upstream line buffer, we have that
+\begin{equation}
+\text{Window throughput} =
+\frac{pxPerClk_x pxPerClk_y}{stride_x stride_y} = 4
+\end{equation}
+
+So, there are 4 output windows per cycle (the initial and final batch
+of windows are highlighted in purple), and, since both strides are 1,
+the input and output images have the same size -- height 6, width
+12. The $0^{th}$ output window of the initial valid output cycle
+consists of the 9 pixels from the origin (-1,-1) to (1,1); this window
+is still considered a valid output even though 5 of its pixels are
+garbage values.
+
+The stencil logic connecting the two line buffers must be mapped by 4,
+since the upstream buffer produces 4 output windows per clock cycle.
+Each pixel is labelled with the clock cycle that it is input to the
+line buffer, and pixels whose values are based on windows with garbage
+pixels are shaded in gray.
+
+The downstream line buffer has the same $pxPerClk$ but a different
+stride -- (1,2). This halves the width of its output image (now $6
+\times 6$), and halves its window throughput to 2. The stencil logic
+downstream of this line buffer, which produces the final output image,
+is only mapped by 2 then.
+
+Based on my propose schedule for such a pipeline, the output image
+has size $6 \times 6$ (18 valid outputs of 2 pixels each). However,
+at the end of the pipeline, we may change our definition of ``valid''
+to exclude garbage pixel values. Using bounds analysis we can conclude
+that the valid portion of the output image has size $2 \times 3$.
 
 \section{Functional Simulator}
 

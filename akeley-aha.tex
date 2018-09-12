@@ -31,7 +31,7 @@ tasks in further sections.
 
 \section{Summary}
 
-Most of my work is on the Haskell portion of Aetherling.
+Most of my work was on the Haskell portion of Aetherling.
 Aetherling supports a Haskell intermediate representation (IR) of
 hardware pipelines as an abstract syntax tree (AST) of ops.  These ops
 include arithmetic ops (e.g. multiplication) and meta-ops that take
@@ -232,7 +232,8 @@ that prime factor, the line buffer cannot be parallelized at all.
 \caption{Visualization of how input pixels tile an image. This line
 buffer takes 2 pixels per clock, has a $5 \times 5$ window size,
 and reads a $11 \times 10$ image. Red inputs produce no
-valid output windows; black inputs produce only valid output windows.}
+valid output windows; black inputs produce only valid output windows
+(under old line buffer rules).}
 \end{figure}
 
 A further drawback of the original line buffer is that it did not
@@ -323,6 +324,7 @@ array equals the width of the image, then the image is streamed-in one
 Example: For a 9-pixel wide image and a $(1,3)$ pixels-per-clock
 parameter, the first 4 cycles will see these pixels as input:
 
+\begin{center}
 \begin{tabular}{c|r r r}
 cycle & input[0][0] & input[0][1] & input[0][2] \\
 \hline
@@ -332,6 +334,7 @@ cycle & input[0][0] & input[0][1] & input[0][2] \\
 \hline
 3 & (1,0) & (1,1) & (1,2)
 \end{tabular}
+\end{center}
 
 The output is a 3D-array of pixels: the inner 2 dimensions correspond
 to the height and width of a window, and the outer dimension is for
@@ -356,6 +359,22 @@ $\frac{2048}{2}$ rows of output windows, $\frac{1024}{2}$ windows
 per row, yielding a total of $1024\times 512$ windows,
 each of which gets convolved to yield 1 pixel of the $1024 \times 512$
 output image.
+
+\begin{figure}[htb!]
+  \centering
+  \includegraphics[width=0.6\linewidth]{Figures/lb-format.jpg}
+  \caption{Figure representing one cycle's output of a line buffer
+    with a $(3,4)$ output window size, an $x$-stride of 2, and 2
+    output windows per clock. The output array dimensions are
+    \texttt{[2,3,4]}, since there's a count of 2 output windows per
+    cycle, and each window has a size of $(3,4)$. The highlighted
+    pixel has coordinates \texttt{[0,1,3]} and \texttt{[1,1,1]},
+    because it's at coordinate $(1,3)$ of the upper-left-most window
+    (\texttt{O[0]}) and at coordinate $(1,1)$ of the \texttt{O[1]}
+    window (the window 1 stride to the right of the \texttt{O[0]}
+    window).}
+  \label{4D_output}
+\end{figure}
 
 \subsection{Throughput and Schedule}
 
@@ -419,21 +438,98 @@ This line buffer reads in an entire row of the image per clock cycle,
 and, dividing ($1\times 8$) by ($2\times 2$), we deduce that it should
 emit 2 valid output windows per clock cycle. After waiting a certain
 number of latency cycles (depends on implementation), the line buffer
-should output the 2-window arrays A, B, C, and D in 4 clock cycles
+should output the 2-window arrays A, B, C, and D over 4 clock cycles
 with no pauses in between (unless the line buffer has been wrapped in
 an underutilization op).
 
 \subsection{Remaining Divisibility Requirements}
 
-% Need pxPerClk restrictions to make the average argument work.
+The remaining divisibility requirements are that
+\begin{enumerate}
+  \item The stride width (height) must divide the image width (height).
+  \item The $pxPerClk$ width must divide the image width.
+  \item The window throughput must be an integer or a reciprocal of an integer.
+  \item If $pxPerClk$ height is not 1, then
+  \begin{enumerate}
+    \item $pxPerClk_x = image_x$.
+    \item $pxPerClk_y$ must divide $image_y$.
+    \item $pxPerClk_y$ must divide $stride_y$, or the other way around.
+  \end{enumerate}
+\end{enumerate}
 
-% W/o stride, all lb's in chain have same image size and therefore same
-% choices of throughput. With the old line buffer, this wouldn't be
-% the case if the windows sizes were different.
+The first two divisibility restrictions depend on the image
+dimensions, so I expect them not to be too restrictive since typical
+images have fairly composite dimensions. Furthermore, if multiple line
+buffers are chained together with no downsampling ($stride = (1,1)$),
+then all of them will have the same image size and will not impose
+additional constraints on one another.
 
-% Talk about ``window throughput''
+The $pxPerClk$ restrictions are justified by the difficulty of
+implementing a line buffer that accepts portions of 2 different rows
+in one clock cycle as input, or emits windows from two different rows
+as output in one clock cycle.
+
+The $stride$ restrictions have both conceptual and pragmatic
+justifications. The conceptual justification is that stride is used
+for downsampling, and we expect downsampling by a factor of $x$ should
+scale the number of output samples (windows) by exactly $x^{-1}$ --
+impossible if the image dimension is not itself a multiple of $x$.
+
+
+
+The pragmatic justification is that scheduling becomes difficult
+without this stride assumption. The window throughput calculations
+were dependent on the total number of output windows being exactly
+\begin{equation}
+\frac{image_x image_y}{stride_x stride_y}
+\end{equation}
+This cannot happen if the strides do not divide the image
+dimensions.\footnote{ In case this sounds more-or-less the same as the
+  conceptual reason, the low-level justification is that, to keep the
+  internal buffer size bounded, we need the number of input pixels per
+  clock to match, on average, with the number of ``new'' output pixels
+  per clock (``new'' in the sense that this pixel was not output as
+  part of an earlier output window). It turns out that the average
+  number of new pixels per window is equal to $stride_x stride_y$,
+  leading to the constraint
+  
+  $pxPerClk_x pxPerClk_y = (\text{Window Throughput})stride_x stride_y$
+  
+  (rearrange to get the original Window Throughput calculation).  The
+  issue is that this averaging doesn't work if the strides do not
+  divide their respective image dimensions; the left margin's windows
+  will have a greater-than-average number of new pixels, which will
+  only be balanced out by the right margin's windows having a
+  lower-than-average number of new pixels if the strides divide image
+  dimensions.  See figure \ref{footnote-rambling.jpg} for
+  visualization.  }
+
+\begin{figure}[bth!]
+  \centering
+  \includegraphics[width=0.6\linewidth]{Figures/footnote-rambling.jpg}
+  \caption{Footnote example with image width 8, output window size
+    $(4,4)$ and strides $(3,2)$. There are 4 windows per row of
+    windows since image width 8 divided by x-stride 2 is 4. Notice
+    that the left-most window includes 9 new pixels and the right-most
+    3, but on average each window requires emitting 6 new pixels,
+    which matches the product of the x- and y-strides.}
+  \label{footnote-rambling.jpg}
+\end{figure}
+
+The window throughput restriction is a bit more punishing, although
+not as punishing as the old line buffer's divisibility restrictions.
+This restriction was also motivated by scheduling concerns. It's not
+clear how to schedule a line buffer that produces a fractional number
+of valid output windows per cycle (with window throughput $>1$), and,
+at the time I made my line buffer proposal, if window throughput were
+less than 1, it also wasn't clear how to schedule line buffers with
+window throughput not of the form $\frac{1}{N}$, $N:$integer. My phase
+proposal might make it feasible to lift the window throughput
+restrictions when window throughput is below 1.
 
 \subsection{Chain of Line Buffers Example}
+
+
 
 \section{Functional Simulator}
 

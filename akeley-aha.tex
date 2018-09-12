@@ -582,6 +582,122 @@ that the valid portion of the output image has size $2 \times 3$.
 
 \section{Functional Simulator}
 
+Note: \texttt{src/Core/Aetherling/Simulator/README.md} in the
+\texttt{aetherlingHaskellIR} source tree is the main source of
+documentation for the functional simulator.
+
+The functional simulator (\texttt{simulateHighLevel} function) was the
+first contribution I made to the Aetherling project. At the time, the
+plan for timing Aetherling ops wasn't clear, and many of the ops were
+not realized in hardware yet, so it seemed important to write a
+high-level simulator that did not concern itself with precise hardware
+details like timing.
+
+The data type that the simulator operates on is a ``stream'' of
+\texttt{ValueType}: this represents the values of a port's valid
+outputs through time, with no timing details included. Input is passed
+to a simulated op with multiple ports as a list of streams,
+represented in Haskell as a 2D-list of \texttt{ValueType}, with the
+outer dimension corresponding to ports and the inner dimension
+corresponding to time.
+
+As a simple example, consider simulating an adder:
+
+\begin{verbatim}
+inputs = [
+    [V_Int 0, V_Int 2, V_Int 4],
+    [V_Int 30, V_Int 20, V_Int 10]]
+simulateHighLevel (addInts T_Int) inputs [] -- empty memory argument
+
+outputs: ([V_Int 30, V_Int 22, V_Int 14], []) -- empty memory result
+\end{verbatim}
+
+(\texttt{V\_Int} constructs a \texttt{ValueType} representing a
+simulated integer value).
+
+Assuming the adder is timed to perform one add per cycle, this simulation
+corresponds to an adder calculating
+\begin{center}
+\begin{tabular}{c|c c|c}
+cycle & port 0 input & port 1 input & result\\
+0 & 0 & 30 & 0 + 30 = 30 \\
+1 & 2 & 20 & 2 + 20 = 22 \\
+2 & 4 & 10 & 4 + 10 = 14
+\end{tabular}
+\end{center}
+over 3 clock cycles.
+
+The reason I chose the outer dimension of the input list to correspond to
+port and the inner dimension correspond to time is that it's not possible
+to represent inputs the other way without knowing details of the simulated
+pipeline's timing.
+
+Consider a pipeline with two input port. This pipeline reads a 4-sequence
+of integers from port 0 and a single integer from port 1; sums up the
+4-sequence, multiplies the single integer by 16, and outputs the
+maximum of those two values. We can write this pipeline as
+
+\begin{verbatim}
+add4stream = arrayReshape [T_Int] [tInts [1]] |>>=| ReduceOp 1 4 (addInts T_Int)
+pipeline = (add4stream |&| underutil 4 (Shl 4)) |>>=| underutil 4 (maxInts T_Int)
+\end{verbatim}
+
+Simulate the pipeline with 2 input sequences using
+
+\begin{verbatim}
+inputs =
+    [ -- port 0 input
+      [V_Int 1, V_Int 2, V_Int 3, V_Int 4, V_Int 5, V_Int 6, V_Int 7, V_Int 8],
+      -- port 1 input
+      [V_Int 0, V_Int 10] ]
+simulateHighLevel pipeline inputs []
+\end{verbatim}
+
+The port output should be \texttt{[10, 160]}: each input sequence
+results in a single output. The $0^{th}$ 4-sequence on port 0 is
+\texttt{[1, 2, 3, 4]}, and the $0^{th}$ 1-sequence on port 1 is
+\texttt{[0]}, so we expect output \texttt{[0]} to be
+\begin{equation}
+    \max(1+2+3+4, 0 \text{ shl } 4) = \max(10, 0) = 10
+\end{equation}
+
+Output number \texttt{[1]} should be based on the $1^{st}$ input
+4- and 1- sequences on ports 0 and 1, so we expect to see
+\begin{equation}
+    \max(5+6+7+8, 10 \text{ shl } 4) = \max(26, 160) = 160
+\end{equation}
+
+The important point is that entry \texttt{[1]} of the port 1 input
+(\texttt{...V\_Int 10]}) is automatically matched with 4-sequence
+input number \texttt{[1]} on port 0,
+\texttt{...V\_Int 5, V\_Int 6, V\_Int 7, V\_Int 8]}. This could
+not have been done if the input 2D-list's dimensions were swapped
+without knowing the precise timing of the circuit. In this case,
+the timing will be for port 1's input to come in as the last
+($3^{rd}$) input of port 0's 4-sequence comes in, so, if the simulator
+were written with the input dimensions swapped (time outer, port
+inner dimension), the input may look something like
+
+\begin{verbatim}
+-- port 0 (4-sequence)
+--   V
+--   V    port 1 (1-sequence)
+--   V      V
+[ -- V      V
+  [V_Int 1, X],       -- cycle 0 input
+  [V_Int 2, X],       -- cycle 1 input
+  [V_Int 3, X],       -- cycle 2 input
+  [V_Int 4, V_Int 0], -- cycle 3 input
+  [V_Int 5, X],       -- cycle 4 input
+  [V_Int 6, X],       -- cycle 5 input
+  [V_Int 7, X],       -- cycle 6 input
+  [V_Int 8, V_Int 10] -- cycle 7 input
+]
+\end{verbatim}
+
+In general though, at the time the simulator was written, it would not
+have been possible to deduce exact timing in all cases.
+
 \section{Demonstration Apps}
 
 %% Talk about how writing apps led to realizations of what new line buffer needs?

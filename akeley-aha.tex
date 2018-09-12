@@ -31,13 +31,15 @@ tasks in further sections.
 
 \section{Summary}
 
-Most of my work was on the Haskell portion of Aetherling.
-Aetherling supports a Haskell intermediate representation (IR) of
-hardware pipelines as an abstract syntax tree (AST) of ops.  These ops
-include arithmetic ops (e.g. multiplication) and meta-ops that take
-other ops as children (e.g. \texttt{MapOp}, which duplicates an op in
-parallel; \texttt{ComposeSeq}, which wires the outputs of one op to
-the inputs of another).
+Most of my work was on the Haskell portion of Aetherling.  Aetherling
+supports a Haskell intermediate representation (IR) of hardware
+pipelines as an abstract syntax tree (AST) of ops.  These ops include
+arithmetic ops (e.g. multiplication) and meta-ops that take other ops
+as children (e.g. \texttt{MapOp}, which duplicates an op in parallel;
+\texttt{ComposeSeq}, which wires the outputs of one op to the inputs
+of another). These ASTs can then be transformed by Aetherling passes,
+such as the speed-up pass, which automatically paralellizes an
+Aetherling pipeline.
 
 \begin{enumerate}
 
@@ -681,7 +683,7 @@ inner dimension), the input may look something like
 \begin{verbatim}
 -- port 0 (4-sequence)
 --   V
---   V    port 1 (1-sequence)
+--   V    port 1 (1-sequence), X denotes invalid input
 --   V      V
 [ -- V      V
   [V_Int 1, X],       -- cycle 0 input
@@ -697,6 +699,33 @@ inner dimension), the input may look something like
 
 In general though, at the time the simulator was written, it would not
 have been possible to deduce exact timing in all cases.
+
+\subsection{Implementation Notes}
+
+Aetherling (at the time of writing) defines two memory ops:
+\texttt{MemRead} and \texttt{MemWrite}. Unlike port inputs and
+outputs, which only appear at the beginning and end of a pipeline,
+memory inputs and outputs could appear at any stage of an Aetherling
+pipeline. Distributing \texttt{MemRead} values and collecting
+\texttt{MemWrite} values properly was difficult to implement in the
+simulator.
+
+The first problem is that the individual \texttt{MemRead} and
+\texttt{MemWrite} ops have no names, making it hard to even specify
+the inputs and outputs. The solution I came up with for the time being
+is to number each \texttt{MemRead} and \texttt{MemWrite} based on the
+order they would be visited by a depth-first search of an Aetherling
+AST.\footnote{Strictly speaking, the memory ops are numbered based on
+  the order they would be visited by a DFS of an Aetherling AST
+  transformed by duplicating ops by the number of times they actually
+  appear in a physical circuit. Aetherling defines ops like
+  \texttt{MapOp n} that have one child node that represents \texttt{n}
+  copies of the actual op. If that op contains memory ops, each needs
+  to be numbered separately.}
+
+Internally, the simulator works by specializing the \texttt{simhl}\footnote{
+\textit{sim}ulate \textit{h}igh \textit{l}evel} function for each op
+offered by Aetherling.
 
 \section{Demonstration Apps}
 

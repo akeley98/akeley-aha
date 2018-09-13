@@ -37,7 +37,8 @@ pipelines as an abstract syntax tree (AST) of ops.  These ops include
 arithmetic ops (e.g. multiplication) and meta-ops that take other ops
 as children (e.g. \texttt{MapOp}, which duplicates an op in parallel;
 \texttt{ComposeSeq}, which wires the outputs of one op to the inputs
-of another). These ASTs can then be transformed by Aetherling passes,
+of another) -- such meta-ops can also be viewed as subtrees of the
+full AST. Aetherling ASTs can then be transformed by passes,
 such as the speed-up pass, which automatically paralellizes an
 Aetherling pipeline.
 
@@ -195,7 +196,8 @@ multiple output windows would be produced per cycle as well.
 This plan seemed simple, but in practice such parallelized line
 buffers were difficult to schedule. The main issue was that, with
 multiple windows output per cycle, it's possible for some to be valid
-and some to be invalid at the same time. This would require some
+and some to be invalid at the same time. Even with ready-valid timing,
+this would require some
 complicated lane-interleaving logic downstream from the line
 buffer. Furthermore, even without paralellization, this line buffer
 would be difficult to place in a synchronously-timed circuit
@@ -352,15 +354,38 @@ rows of valid output windows, each of which consists of
 \end{equation}
 valid output windows.
 
-Conceptually, stride is used for downsampling, so we expect
-that the number of outputs should be divided by the stride. For
-example, if we're using a line buffer to downsample a
-$2048\times 1024$ image by 2 with Gaussian smoothing step,
-we would use a line buffer with a $(2,2)$ stride, and expect
-$\frac{2048}{2}$ rows of output windows, $\frac{1024}{2}$ windows
-per row, yielding a total of $1024\times 512$ windows,
-each of which gets convolved to yield 1 pixel of the $1024 \times 512$
-output image.
+\begin{table}
+\centering
+\begin{tabular}{| c c | c c | c c |}
+\hline
+X & X & O & O & X & X \\
+\hline
+O & O & X & X & O & O \\
+\hline
+X & X & O & O & X & X \\
+\hline
+O & O & X & X & O & O \\
+\hline
+\end{tabular}
+
+\caption{
+Visualization of how a line buffer's $4 \times 6$ image would be
+broken down into $1 \times 2$ windows, with stride $1 \times 2$. (X
+and O used to represent window regions). $\frac{4}{1} = 4$, so there
+are 4 rows of output windows. $\frac{6}{2} = 3$, so there are 3 valid
+output windows per row. If this line buffer takes 1 input pixel per
+cycle, then every other cycle the line buffer's outputs are not
+considered valid due to stride.}
+\end{table}
+
+Conceptually, stride is used for downsampling, so we expect that the
+number of outputs should be divided by the stride. For example, if
+we're using a line buffer to downsample a $2048\times 1024$ image by 2
+in each direction with a Gaussian smoothing step, we would use a line
+buffer with a $(2,2)$ stride, and expect $\frac{2048}{2}$ rows of
+output windows, $\frac{1024}{2}$ windows per row, yielding a total of
+$1024\times 512$ windows, each of which gets convolved to yield 1
+pixel of the $1024 \times 512$ output image.
 
 \begin{figure}[htb!]
   \centering
@@ -560,7 +585,7 @@ So, there are 4 output windows per cycle (the initial and final batch
 of windows are highlighted in purple), and, since both strides are 1,
 the input and output images have the same size -- height 6, width
 12. The $0^{th}$ output window of the initial valid output cycle
-consists of the 9 pixels from the origin (-1,-1) to (1,1); this window
+consists of the 9 pixels from (1,1) to the origin (-1,-1); this window
 is still considered a valid output even though 5 of its pixels are
 garbage values.
 
@@ -571,12 +596,12 @@ line buffer, and pixels whose values are based on windows with garbage
 pixels are shaded in gray.
 
 The downstream line buffer has the same $pxPerClk$ but a different
-stride -- (1,2). This halves the width of its output image (now $6
-\times 6$), and halves its window throughput to 2. The stencil logic
+stride -- (1,2). This halves the width of its output image
+(now $6\times 6$), and halves its window throughput to 2. The stencil logic
 downstream of this line buffer, which produces the final output image,
 is only mapped by 2 then.
 
-Based on my propose schedule for such a pipeline, the output image
+Based on my proposed schedule for such a pipeline, the output image
 has size $6 \times 6$ (18 valid outputs of 2 pixels each). However,
 at the end of the pipeline, we may change our definition of ``valid''
 to exclude garbage pixel values. Using bounds analysis we can conclude
@@ -640,7 +665,7 @@ of integers from port 0 and a single integer from port 1; sums up the
 maximum of those two values. We can write this pipeline as
 
 \begin{verbatim}
-add4stream = arrayReshape [T_Int] [tInts [1]] |>>=| ReduceOp 1 4 (addInts T_Int)
+add4stream = arrayReshape [T_Int] [tInts [1]] |>>=| reduceOp 4 1 (addInts T_Int)
 pipeline = (add4stream |&| underutil 4 (Shl 4)) |>>=| underutil 4 (maxInts T_Int)
 \end{verbatim}
 
@@ -831,7 +856,7 @@ do it efficiently, with as few additional register bits as possible.
 Before describing this solution, I should point out that we made one
 compromise on the definition of an efficient solution. We decided
 that, with few exceptions\footnote{Ops lacking either input or output
-  ports (e.g. \texttt{MemWrite}, and ops with ready-valid interface},
+  ports (e.g. \texttt{MemWrite}, and ops with ready-valid interface)},
 a \texttt{ComposePar}'s child ops should always have the same
 latencies, even though it may be possible to have a correct pipeline
 with some mismatched \texttt{ComposePar}s. See \footnote{Suppose
@@ -864,20 +889,21 @@ The new \texttt{Register} op can be used by being composed in
 sequence with the op to be delayed (using operator \texttt{|>>=|}).
 
 The basic idea behind my recursive retiming pass is that, when it
-operates on an Aetherling AST, it
+operates on an Aetherling AST (or a subtree representing a portion of
+the pipeline), it
 \begin{enumerate}
 \item Matches the latencies of all child ops of \texttt{ComposePar}
-  found in the AST, unless the child ops have ready-valid timing and
+  found in the subtree, unless the child ops have ready-valid timing and
   the user elected to skip latency matching for such ops.
 
-\item Increases the latency of the passed AST by an
+\item Increases the latency of the passed subtree by an
   \textit{additional} latency delta, beyond what is needed to just
   make all \texttt{ComposePar} children match.
 
 \item Returns the cost (in register bits) of additionally delaying the
-  circuit represented by the AST by \textit{latency delta}.
+  portion of the pipeline passed by \textit{latency delta}.
 \end{enumerate}
-The motivation for \textit{latencyDelta} and the cost result comes
+The motivation for \textit{latency delta} and the cost result comes
 from the case of \texttt{ComposeSeq} in \texttt{ComposePar}. If the
 inner \texttt{ComposeSeq} needs to have its latency increased by $L$
 to match some other child op of the outer \texttt{ComposePar}, then
@@ -893,11 +919,11 @@ deltas (named \texttt{lowLatencyDelta} and \texttt{highLatencyDelta}).
 Then, in a result of type \texttt{RetimeComposeParResult}, it returns
 two versions of the retimed op: \texttt{rcpLowDelay} and
 \texttt{rcpHighDelay}, along with the cost difference between these
-two versions. These two returned ops have been
+two versions. These two returned ops
 \begin{enumerate}
-\item all their child \texttt{ComposePar}s retimed (except for
+\item have all their child \texttt{ComposePar}s retimed (except for
 ones exempt from retiming).
-\item delayed by an additional \texttt{lowLatencyDelta} or
+\item have been delayed by an additional \texttt{lowLatencyDelta} or
 \texttt{highLatencyDelta} number of registers (for \texttt{rcpLowDelay}
 and \texttt{rcpHighDelay} respectively). % Did I need to say that?
 \end{enumerate}
@@ -933,10 +959,10 @@ at the point of call).
 
 One may ask why I don't need 3 latency deltas for the
 \texttt{ComposePar} in \texttt{ComposeSeq}* in \texttt{ComposePar} in
-\texttt{ComposeSeq} in \texttt{ComposePar} case. In that case,
-shouldn't the starred \texttt{ComposeSeq} receive two different latency
-deltas, and therefore need to make 3 different latency delta requests for
-its own child ops?
+\texttt{ComposeSeq} in \texttt{ComposePar} case. In that case, the
+starred \texttt{ComposeSeq} receive two different latency deltas, and
+therefore may appear to need 3 different latency delta requests for its own
+child ops:
 \begin{enumerate}
 \item 0 latency increase, since \texttt{ComposeSeq} eventually chooses
   only one of its child ops to have its latency increased -- all others
@@ -957,16 +983,17 @@ with only one latency delta. I would still have to return 2 different
 versions of a retimed op: one with 0 additional latency and one
 with \textit{latency delta} increased latency. As with the $M+L$
 argument I made earlier, this design leads to an exponential time
-algorithm (exponential in the number of ops in the entire tree).
+algorithm (exponential in the number of ops in the entire tree). So
+at least 2 \textit{latency delta} choices are needed.
 
 When retimed, \texttt{ComposeSeq} conceptually has to try out 3
 different latency deltas for its child ops: 0,
-\textit{lowLatencyDelta}, and \textit{highLatencyDelta}.  However,
+\texttt{lowLatencyDelta}, and \texttt{highLatencyDelta}.  However,
 since only 1 of the child ops in sequence will actually have its
 latency increased, what we actually do is retime all ops with
 \begin{align*}
-    \texttt{lowLatencyDelta} &= 0
-    \texttt{highLatencyDeltay} &= \text{highLatencyDelta argument}
+    \texttt{lowLatencyDelta} &= 0 \\
+    \texttt{highLatencyDelta} &= \text{highLatencyDelta argument}
 \end{align*}
 We use the cost result to deduce which op will actually have its
 latency increased, then call the retiming function again

@@ -818,6 +818,37 @@ more bits than the output.}
 
 \section{ComposePar Retiming}
 
+The \texttt{ComposePar} node of an Aetherling AST takes a list of
+child ops, and represents placing that list of ops in parallel in
+hardware. It's important that all these ops have the same latency when
+the hardware is realized, so I wrote a pass that visits each
+\texttt{ComposePar} of an AST, and adds register ops as needed to make
+all child ops of \texttt{ComposePar}s have matching latencies.
+
+Solving the problem correctly is simple enough; the challenge was to
+do it efficiently, with as few additional register bits as possible.
+
+Before describing this solution, I should point out that we made one
+compromise on the definition of an efficient solution. We decided
+that, with few exceptions\footnote{Ops lacking either input or output
+  ports (e.g. \texttt{MemWrite}, and ops with ready-valid interface},
+a \texttt{ComposePar}'s child ops should always have the same
+latencies, even though it may be possible to have a correct pipeline
+with some mismatched \texttt{ComposePar}s. See \footnote{Suppose
+a, b, c, and d are all one input, one output port ops, a and d have 0
+latency, b has 5 latency, and c has 10 latency. Consider the pipeline
+\texttt{(a |\&| b) |>>=| (c |\&| d)}. To make both \texttt{ComposePar}'s
+(\texttt{|\&|}) match, we would have to delay a with 5 registers
+and d with 10 registers. However, c has no dependency on b and d has
+no dependency on a, so we could have just delayed b by 5 cycles so
+that the a,c and b,d paths both have 10 latency. We considered
+this performance issue not to be too serious: we encourage users to
+write pipelines as a \texttt{ComposePar} of \texttt{ComposeSeq}s if
+possible. In this case, the functionally-identical pipeline would
+be \texttt{(a |>>=| c) |\&| (b |>>=| d)}, which my retiming pass would
+fix by adding just 5 register delays to \texttt{b |>>=| d}.
+} for an example.
+
 \section{Fractional Underutilization and Phase}
 
 % I've tried to be extra verbose in this section because this concept

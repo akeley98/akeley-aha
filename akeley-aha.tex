@@ -91,14 +91,9 @@ By default, Aetherling pipelines are composed of ops representing
 circuits with synchronous timing: they wait for a certain number of
 warm-up cycles, then emit outputs on a repeating schedule (phase). I
 designed a \texttt{ReadyValid} op that represents the idea of wrapping
-a portion of an Aetherling pipeline with a ready-valid interface.  I
-modified the compose operators (\texttt{|\&|} and \texttt{|>>=|}) to
-properly handle the \texttt{ReadyValid} op.  The user is prevented from
-composing an op with ready-valid timing with one with synchronous
-timing, and, when composing two ready-valid ops in sequence, the
-throughput-matching behavior of the Aetherling type system is
-suppressed.
-% There's not that much more to say is there?
+a portion of an Aetherling pipeline with a ready-valid interface,
+making minor changes to the Aetherling type system to work with the
+new op.
 
 \item ComposePar Retiming
 
@@ -797,7 +792,22 @@ has been threaded through the entire AST anchored at
 
 \section{Demonstration Apps}
 
-%% Talk about how writing apps led to realizations of what new line buffer needs?
+The two Aetherling pipelines I wrote, $7 \times 7$ stencil Gaussian
+blur and mipmap generation, both take advantage of the new line
+buffer's features. The mipmap example in particular takes advantage of
+the new line buffer's stride (downsampling) parameter and its flexible
+parallelism. As of yet neither pipeline has been implemented in
+hardware; I only tested their logical correctness using the functional
+simulator.
+
+Both applications are bundled with main functions that call the
+functional simulator with the pipeline and pixel data as input; the
+pixel data gets loaded from png images on disk using the small
+\texttt{ImageIO.hs} library I wrote. That library is also tasked with
+storing simulated outputs as png images, cropping the image to only
+the portion not based on garbage pixels. (Just as I proposed in my
+line buffer specifications, this cropping responsibility is pushed to
+the final stage of the pipeline).
 
 \section{Simplifying Ops \& Helper Functions}
 
@@ -840,6 +850,28 @@ Examples: \texttt{arrayReshape [tBits[2]] [T\_Bit, T\_Bit]} (conversion of
 more bits than the output.}
 
 \section{ReadyValid Op}
+
+By default, Aetherling pipelines are composed of ops representing
+circuits with synchronous timing: they wait for a certain number of
+warm-up cycles, then emit outputs on a repeating schedule (phase). I
+designed a \texttt{ReadyValid} op that represents the idea of wrapping
+a subtree of an Aetherling AST with a ready-valid interface.  I
+modified the compose operators (\texttt{|\&|} and \texttt{|>>=|}) to
+properly handle the \texttt{ReadyValid} op.  The user is prevented
+from composing an op with ready-valid timing with one with synchronous
+timing, and, when composing two ready-valid ops in sequence, the
+throughput-matching check of the Aetherling type system is suppressed.
+
+I decided to implement the \texttt{ReadyValid} op by adding a
+ready-valid flag to Aetherling's \texttt{PortType}; when
+\texttt{ReadyValid} has its ports queried, it just copies its child
+op's ports, with the port ready-valid flag set to true. This allows
+the user to determine if a portion of an Aetherling pipeline has a
+ready-valid interface easily, without having to search the AST for
+\texttt{ReadyValid} ops, as port information is largely preserved
+through op composition. This design also allows for future ops to
+declare ready-valid interfaces independently of \texttt{ReadyValid} --
+this may be useful for things like data-dependent filters.
 
 \section{ComposePar Retiming}
 
@@ -956,6 +988,11 @@ by calling the retime function twice with different latency deltas,
 the retime algorithm would run in exponential time since each call of
 the retime function entails recursion through the entire tree (rooted
 at the point of call).
+
+\texttt{composeTest33} throught \texttt{36} in
+\texttt{aetherlingHaskellIR/test/TestCompose.hs} provide example
+pipelines that take advantage of the 2-latency-delta design
+while being retimed.
 
 One may ask why I don't need 3 latency deltas for the
 \texttt{ComposePar} in \texttt{ComposeSeq}* in \texttt{ComposePar} in

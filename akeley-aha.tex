@@ -821,7 +821,7 @@ more bits than the output.}
 The \texttt{ComposePar} node of an Aetherling AST takes a list of
 child ops, and represents placing that list of ops in parallel in
 hardware. It's important that all these ops have the same latency when
-the hardware is realized, so I wrote a pass that visits each
+the hardware is realized, so I wrote a retiming pass that visits each
 \texttt{ComposePar} of an AST, and adds register ops as needed to make
 all child ops of \texttt{ComposePar}s have matching latencies.
 
@@ -848,6 +848,136 @@ possible. In this case, the functionally-identical pipeline would
 be \texttt{(a |>>=| c) |\&| (b |>>=| d)}, which my retiming pass would
 fix by adding just 5 register delays to \texttt{b |>>=| d}.
 } for an example.
+
+Another small thing to mention is that I replaced the \texttt{Delay}
+op, which takes one child op to delay with registers, with a leaf
+\texttt{Register} op. I did this because the \texttt{Delay} op either
+\begin{enumerate}
+\item Left ambiguous whether the registers were on the inputs or
+  outputs of the wrapped op, or,
+\item If one of those choices were defined as standard, the
+  \texttt{Delay} op is not expressive enough to convey one
+  possible delay choice -- either the choice of placing a delay
+  at the very end, or at the very beginning, of a pipeline.
+\end{enumerate}
+The new \texttt{Register} op can be used by being composed in
+sequence with the op to be delayed (using operator \texttt{|>>=|}).
+
+The basic idea behind my recursive retiming pass is that, when it
+operates on an Aetherling AST, it
+\begin{enumerate}
+\item Matches the latencies of all child ops of \texttt{ComposePar}
+  found in the AST, unless the child ops have ready-valid timing and
+  the user elected to skip latency matching for such ops.
+
+\item Increases the latency of the passed AST by an
+  \textit{additional} latency delta, beyond what is needed to just
+  make all \texttt{ComposePar} children match.
+
+\item Returns the cost (in register bits) of additionally delaying the
+  circuit represented by the AST by \textit{latency delta}.
+\end{enumerate}
+The motivation for \textit{latencyDelta} and the cost result comes
+from the case of \texttt{ComposeSeq} in \texttt{ComposePar}. If the
+inner \texttt{ComposeSeq} needs to have its latency increased by $L$
+to match some other child op of the outer \texttt{ComposePar}, then
+the \texttt{ComposeSeq} has the choice of delaying any of its child
+ops by $L$ (since the latency of a \texttt{ComposeSeq} is the sum of
+all its sequential child ops' latencies). To do this most efficiently
+then, \texttt{ComposeSeq} should ask all of its child ops how
+expensive it would be to increase their latency by $L$, and only
+actually increase the latency of the one that reports the lowest cost.
+
+It turned out that the actual retiming function needed two latency
+deltas (named \texttt{lowLatencyDelta} and \texttt{highLatencyDelta}).
+Then, in a result of type \texttt{RetimeComposeParResult}, it returns
+two versions of the retimed op: \texttt{rcpLowDelay} and
+\texttt{rcpHighDelay}, along with the cost difference between these
+two versions. These two returned ops have been
+\begin{enumerate}
+\item all their child \texttt{ComposePar}s retimed (except for
+ones exempt from retiming).
+\item delayed by an additional \texttt{lowLatencyDelta} or
+\texttt{highLatencyDelta} number of registers (for \texttt{rcpLowDelay}
+and \texttt{rcpHighDelay} respectively). % Did I need to say that?
+\end{enumerate}
+
+The reason I need two latency deltas is the \texttt{ComposePar} in
+\texttt{ComposeSeq} in \texttt{ComposePar} case, which I felt was
+common enough in real pipelines to warrant my attention (keep in mind
+that these ops may not be nested in each other directly; there may be
+other ``wrapper'' ops like \texttt{MapOp} in between, preventing me
+from solving the problem by detecting and dealing with this special
+case directly).
+
+Suppose that the middle \texttt{ComposeSeq} is requested by the outer
+\texttt{ComposePar} to increase its latency by $L$. It passes this
+request on to its child ops, including the inner \texttt{ComposePar}.
+This inner \texttt{ComposePar} receives 0 as its
+\texttt{lowLatencyDelta} and $L$ as its \texttt{highLatencyDelta}
+(because the \texttt{ComposeSeq} is going to choose between not
+delaying this op at all, and delaying it by the full $L$ latency
+request). This means that all of the inner \texttt{ComposePar}'s child
+ops need to be requested to increase their latencies by 0 and
+$L$. But, because we also have to match latencies, (our original
+goal), some child op may have to have its latency increased by $M$ to
+match. Therefore, we will need to try to increase said child op's
+latency by both $M$ (to match) and $M+L$ (to match, and to increase
+our latency by the requested amount).
+
+This is why we need two latency delta values -- if I implemented this
+by calling the retime function twice with different latency deltas,
+the retime algorithm would run in exponential time since each call of
+the retime function entails recursion through the entire tree (rooted
+at the point of call).
+
+One may ask why I don't need 3 latency deltas for the
+\texttt{ComposePar} in \texttt{ComposeSeq}* in \texttt{ComposePar} in
+\texttt{ComposeSeq} in \texttt{ComposePar} case. In that case,
+shouldn't the starred \texttt{ComposeSeq} receive two different latency
+deltas, and therefore need to make 3 different latency delta requests for
+its own child ops?
+\begin{enumerate}
+\item 0 latency increase, since \texttt{ComposeSeq} eventually chooses
+  only one of its child ops to have its latency increased -- all others
+  just get retimed without latency increase.
+\item The argument \texttt{lowLatencyDelta}.
+\item The argument \texttt{highLatencyDelta}.
+\end{enumerate}
+
+Besides the issue of infinite regress, my excuse for choosing 2 as the
+optimal number of latency delta choices is the asymmetry between
+\texttt{ComposePar} and \texttt{ComposeSeq}: \texttt{ComposeSeq} only
+has to increase the latency of one of its child ops when retimed,
+while a \texttt{ComposePar} of $n$ ops potentially has to increase
+the latencies of $n-1$ of its child ops (to match the slowest op).
+
+Suppose I had chosen to write the \texttt{ComposePar} retiming passes
+with only one latency delta. I would still have to return 2 different
+versions of a retimed op: one with 0 additional latency and one
+with \textit{latency delta} increased latency. As with the $M+L$
+argument I made earlier, this design leads to an exponential time
+algorithm (exponential in the number of ops in the entire tree).
+
+When retimed, \texttt{ComposeSeq} conceptually has to try out 3
+different latency deltas for its child ops: 0,
+\textit{lowLatencyDelta}, and \textit{highLatencyDelta}.  However,
+since only 1 of the child ops in sequence will actually have its
+latency increased, what we actually do is retime all ops with
+\begin{align*}
+    \texttt{lowLatencyDelta} &= 0
+    \texttt{highLatencyDeltay} &= \text{highLatencyDelta argument}
+\end{align*}
+We use the cost result to deduce which op will actually have its
+latency increased, then call the retiming function again
+\textit{only on the op whose latency will actually be increased}
+(using the \texttt{lowLatencyDelta} argument this time).
+
+When retimed then, a \texttt{ComposeSeq} will only spawn one extra
+``unneccessary'' retime call. This is still, in theory, gratuitously
+inefficient, but in practice it's not inefficient enough for me to
+have considered dedicating more resources to fixing the problem. For
+now, avoiding the worst exponential time algorithm is good enough.
 
 \section{Fractional Underutilization and Phase}
 

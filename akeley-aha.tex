@@ -745,7 +745,15 @@ AST.\footnote{Strictly speaking, the memory ops are numbered based on
 
 Internally, the simulator works by specializing the
 \texttt{simhl}\footnote{ \textit{sim}ulate \textit{h}igh
-  \textit{l}evel} function for each op offered by Aetherling.
+  \textit{l}evel} function for each op offered by Aetherling.  The
+role of this function is to determine all of the outputs through time
+of an op within a pipeline given all of its inputs through time. (So,
+the simulation is not timed like an actual circuit: If we simulate the
+pipeline \texttt{a |>>=| b}, all of the intermediate values ever
+produced -- \texttt{a}'s entire output stream -- are calculated before
+a single output of \texttt{b} is calculated.  I can get away with this
+because there are no directed cycles in an Aetherling DAG).
+
 The \texttt{simhl} function gets passed
 
 \begin{enumerate}

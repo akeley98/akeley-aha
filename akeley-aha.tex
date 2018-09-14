@@ -880,7 +880,11 @@ child ops, and represents placing that list of ops in parallel in
 hardware. It's important that all these ops have the same latency when
 the hardware is realized, so I wrote a retiming pass that visits each
 \texttt{ComposePar} of an AST, and adds register ops as needed to make
-all child ops of \texttt{ComposePar}s have matching latencies.
+all child ops of \texttt{ComposePar}s have matching latencies. (This
+latency is measured internally using the \texttt{sequentialLatency}
+function, which returns the difference in clock cycles between
+the time when the initial input arrives and the time when the
+initial valid output is produced).
 
 Solving the problem correctly is simple enough; the challenge was to
 do it efficiently, with as few additional register bits as possible.

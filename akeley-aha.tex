@@ -38,9 +38,9 @@ arithmetic ops (e.g. multiplication) and meta-ops that take other ops
 as children (e.g. \texttt{MapOp}, which duplicates an op in parallel;
 \texttt{ComposeSeq}, which wires the outputs of one op to the inputs
 of another) -- such meta-ops can also be viewed as subtrees of the
-full AST. Aetherling ASTs can then be transformed by passes,
-such as the speed-up pass, which automatically paralellizes an
-Aetherling pipeline.
+full AST. Aetherling ASTs can then be transformed by passes such as
+the speed-up pass, which automatically paralellizes an Aetherling
+pipeline.
 
 \begin{enumerate}
 
@@ -100,7 +100,7 @@ new op.
 Aetherling includes a \texttt{ComposePar} op that represents placing
 circuits (child ops) in parallel. The user is not required to ensure
 that each parallel path has the same latency (sequential latency --
-the count of the number of register delays along a path). I wrote a
+time difference between initial input and initial valid output). I wrote a
 pass that walks an Aetherling pipeline (in Haskell IR form), searching
 for \texttt{ComposePar} ops, modifying its child ops if needed such
 that all paths have the same latency. The pass finds an optimal
@@ -115,7 +115,11 @@ op. For example, an op that generates 1 valid output every 3 cycles
 would have an output phase of \texttt{[True, False, False]} (Two out
 of every three cycles, the op generates garbage).
 
-The choice of phase for an op with integer underutilization (1 valid
+The choice of phase for an op with integer underutilization\footnote{
+  There are other ways to end up with such phase patterns (for example,
+  \texttt{ReduceOp} natively creates such output patterns), but integer
+  underutilization is the simplest example.
+} (1 valid
 input/output per $X$ clock cycles) is obvious, but with fractional
 underutilization ($X$ valid per $Y$ clocks), there are several
 reasonable phase choices. When several such underutilized ops are
@@ -157,8 +161,9 @@ This parallelization turned out to be difficult for the original line
 buffer op Aetherling supported. The line buffer reads in an image as a
 stream of pixels (streamed in left-to-right, row-by-row), and emits as
 output a stream of rectangular portions of the image (we call these
-rectangles ``windows''). Ops downstream from the line buffer can then
-base their results on pixels streamed in at different points in time.
+rectangles ``windows''). By operating on these output windows, ops
+downstream from the line buffer can then base their results on pixels
+streamed in at different points in time.
 
 The original line buffer was scheduled as follows: each time a pixel
 is streamed in, an output window with the streamed-in pixel at its
@@ -260,7 +265,7 @@ final output image that were produced from garbage pixel values.  By
 moving the responsibility of tracking out-of-bounds pixel access from
 the individual line buffers to a single node at the end of the
 circuit, we can get rid of the two most restrictive divisibility
-requirements listed above.
+requirements listed earlier.
 
 I also proposed that the new line buffer should support output stride
 (horizontal and vertical distance between windows) and origin (the
@@ -398,6 +403,7 @@ pixel of the $1024 \times 512$ output image.
   \label{4D_output}
 \end{figure}
 
+\newpage
 \subsection{Throughput and Schedule}
 
 We define the ``window throughput'' as the average number of valid
@@ -654,7 +660,7 @@ port and the inner dimension correspond to time is that it's not possible
 to represent inputs the other way without knowing details of the simulated
 pipeline's timing.
 
-Consider a pipeline with two input port. This pipeline reads a 4-sequence
+Consider a pipeline with two input ports. This pipeline reads a 4-sequence
 of integers from port 0 and a single integer from port 1; sums up the
 4-sequence, multiplies the single integer by 16, and outputs the
 maximum of those two values. We can write this pipeline as
@@ -777,9 +783,9 @@ popped from the input list whenever \texttt{SimhlState} is passed to a
 \texttt{MemRead}'s simulated output stream. Similarly, a tape is appended to
 the output list by \texttt{simhl MemWrite}.
 
-To support the DFS-based order the user is expected to pass memory
+To support the DFS-based order that the user is expected to pass memory
 inputs in, the user's memory arguments are pasted into the
-\texttt{SimhlState} directly, then, each op's \texttt{simhl}
+\texttt{SimhlState} directly; then, each op's \texttt{simhl}
 implementation is expected to thread the \texttt{SimhlState}
 through all of its child op's \texttt{simhl} calls. (Here,
 thread means to pass the \texttt{SimhlState} as an argument to
@@ -789,8 +795,8 @@ of the original \texttt{SimhlState} going forward).
 Example: If the \texttt{simhl} call for \texttt{ComposePar [a, b]}
 receives \texttt{state} as its \texttt{SimhlState} argument, then that
 \texttt{state} should be passed to the \texttt{simhl a} call (along
-with port inputs), yielding \texttt{SimhlState state'}. This
-\texttt{state'} is passed to \texttt{simhl b}, resulting in
+with port inputs), yielding \texttt{SimhlState} instance \texttt{state'}.
+This \texttt{state'} is passed to \texttt{simhl b}, resulting in
 \texttt{state''}, which should be the final \texttt{SimhlState} value
 returned by \texttt{simhl \$ ComposePar [a, b]}. \texttt{simhl a} and
 \texttt{simhl b} are themselves expected to thread \texttt{SimhlState}
@@ -1007,9 +1013,9 @@ pipelines that take advantage of the 2-latency-delta design
 while being retimed.
 
 One may ask why I don't need 3 latency deltas for the
-\texttt{ComposePar} in \texttt{ComposeSeq}* in \texttt{ComposePar} in
+\texttt{ComposePar} in \textit{\texttt{ComposeSeq}} in \texttt{ComposePar} in
 \texttt{ComposeSeq} in \texttt{ComposePar} case. In that case, the
-starred \texttt{ComposeSeq} receive two different latency deltas, and
+italicized \textit{\texttt{ComposeSeq}} receive two different latency deltas, and
 therefore may appear to need 3 different latency delta requests for its own
 child ops:
 \begin{enumerate}
@@ -1098,7 +1104,7 @@ important yet. The important points of this plan are that
 \item Each port of an op is assigned a phase pattern based on its
   throughput. (In Aetherling, this throughput is calculated by
   dividing \texttt{seqLen}, a property of the port, with \texttt{cps}
-  (clocks per sequence), a property of the entire op).
+  [clocks per sequence], a property of the entire op).
 \item Each output port of an op, in isolation, behaves like this: it
   emits garbage for \texttt{sequentialLatency} cycles, then cycles
   through its assigned phase pattern of valid and garbage outputs. (If
@@ -1119,7 +1125,7 @@ supported integer-reciprocal throughputs.
 
 \subsection{Pipeline Example}
 
-Consider the example pipeline \texttt{A |>>=| B |>>=| C}
+Consider the example (non-ready-valid) pipeline \texttt{A |>>=| B |>>=| C}
 (\texttt{|>>=|} means sequential compose, i.e. wire the outputs of
 left op to inputs of right op). Suppose that \texttt{A} has
 \texttt{sequentialLatency} 10, \texttt{B} has \texttt{sequentialLatency}
@@ -1131,6 +1137,7 @@ The standard phase for $\frac{3}{5}$ throughput is
 and for $\frac{1}{2}$, \texttt{[True, False]}. (\texttt{True} denotes
 a clock cycle with valid input/output; \texttt{False} denotes garbage).
 
+\newpage
 \begin{center}
 \includegraphics[width=1.0\linewidth]{Figures/phase.jpg}
 Visualization of scheduling based on \texttt{sequentialLatency}
@@ -1210,7 +1217,10 @@ buffering). Earlier, I set the $\frac{3}{5}$ throughput phase to
 \texttt{[True, True, False, True, False]}. This pattern can be
 reproduced by working through what a fully-utilized 3-sequence,
 5-array to 5-sequence, 3-array \texttt{SequenceArrayRepack} input
-schedule should be. Make a table with 5 columns, one for each clock
+schedule should be.
+
+\newpage
+Make a table with 5 columns, one for each clock
 cycle 0-4 (fully-utilized $\implies$ \texttt{cps=5}), and have entries
 for inputs, outputs, and leftovers in each column.
 
@@ -1304,26 +1314,27 @@ to have \texttt{sequentialLatency=1}.
 \begin{center}
 % I'm a minus-sign girl in a camelCase world.
 \includegraphics[width=1.0\linewidth]{Figures/underutil-repack.jpg}
-Example of underutilized 3-sequence of 4-array to 4-sequence of
+Example of underutilized (util scaled by 2/3) 3-sequence of 4-array to 4-sequence of
 3-array \texttt{SequenceArrayRepack} (\texttt{cps=6}). The bottom
 chart shows the schedule of the actual repack being analyzed (negative
 entries on the 0-latency leftover row illustrate the problem of array
 entries travelling backwards in time without added latency). The top
 two charts represent the imaginary line buffers used to determine the
 input and output phase.
+
+\texttt{scaleUtil (2\%3) \$ sequenceArrayRepack (4,3) (3,4)}
 \end{center}
 
 \newpage
-As another example, consider the widening counterpart of the first
-line buffer example. This widening line buffer converts from
+As another example, consider the widening counterpart of the earlier
+narrowing line buffer example. This widening line buffer converts from
 5-sequences of 3-arrays to 3-sequences of 5-arrays, with
 \texttt{cps=5}. (Figure \ref{widening.jpg})
 
 \begin{figure}[bth]
 \includegraphics[width=1.0\linewidth]{Figures/widening.jpg}
-Widening repack schedule (\texttt{SequenceArrayRepack (5,3) (3,5)}).
-
-\caption{\texttt{sequentialLatency=2}; the initial valid output comes 2 cycles
+\caption{Widening repack schedule (\texttt{SequenceArrayRepack (5,3) (3,5)}).
+\texttt{sequentialLatency=2}; the initial valid output comes 2 cycles
 after the initial valid input.}
 \label{widening.jpg}
 \end{figure}
